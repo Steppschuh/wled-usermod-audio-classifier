@@ -41,10 +41,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        env: [esp32dev, esp32dev_V4]
+        env: [esp32dev]
 
     env:
-      WLED_REF: c82769893143b488cbd1f6f12abc13c454f08645
+      WLED_REF: 6ee67dec94f3cd3fb2b85b81abb9de380b924c48
 
     steps:
       - name: Checkout Usermod Repo
@@ -87,7 +87,7 @@ jobs:
           [env:${{ matrix.env }}]
           custom_usermods =
             \${common.default_usermods}
-            symlink://${{ github.workspace }}/usermod-repo
+            wled-usermod-audio-classifier = symlink://${{ github.workspace }}/usermod-repo
           EOF
 
       - name: Compile WLED Binary
@@ -107,8 +107,8 @@ jobs:
           if [ -f "${BUILD_DIR}/bootloader.bin" ] && [ -f "${BUILD_DIR}/partitions.bin" ]; then
             BOOT_APP0=$(find ~/.platformio/packages -name "boot_app0.bin" 2>/dev/null | head -n 1)
             if [ -n "$BOOT_APP0" ]; then
-              esptool.py --chip esp32 merge_bin -o "build_output/wled_audio_classifier_${{ matrix.env }}_factory.bin" \
-                --flash_mode dio --flash_size 4MB \
+              esptool.py --chip esp32 merge-bin -o "build_output/wled_audio_classifier_${{ matrix.env }}_factory.bin" \
+                --flash-mode dio --flash-size 4MB \
                 0x1000 "${BUILD_DIR}/bootloader.bin" \
                 0x8000 "${BUILD_DIR}/partitions.bin" \
                 0xe000 "$BOOT_APP0" \
