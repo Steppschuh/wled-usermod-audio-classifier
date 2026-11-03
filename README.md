@@ -107,6 +107,19 @@ In the WLED web UI, navigate to **Config > Usermods**:
 
 ---
 
+## 📚 Documentation
+
+Detailed technical documentation and project planning artifacts:
+
+- **[Architecture & Technical Design](docs/architecture.md)**: System design, I2S DMA pipeline, Usermod V2 hooks, data flow, and MQTT schema.
+- **[Feature Specification & Scope](docs/spec.md)**: User journeys, MoSCoW scope matrix, and edge case handling.
+- **[Vision & Problem Statement](docs/vision.md)**: Target audience, personas, UVP, and success metrics.
+- **[Idea Evaluation & Competitor Analysis](docs/evaluation.md)**: Analysis of existing solutions (ESPHome, WLED-SR, RPi), feasibility, and risk mitigations.
+- **[Beginner Flashing Guide](docs/flashing-guide.md)**: Step-by-step browser OTA, WebSerial, and PlatformIO compilation instructions.
+- **[Documentation Index & Checklist](docs/overview.md)**: Project maturity checklist, navigation, and roadmap.
+
+---
+
 ## 📄 License
 
 Licensed under the **European Union Public Licence v1.2** ([EUPL-1.2](LICENSE)).
