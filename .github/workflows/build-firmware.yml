@@ -34,9 +34,10 @@ jobs:
       - name: Configure Usermod in WLED
         run: |
           cd wled-core
+          mkdir -p usermods/AudioClassifier
+          cp ../library.json ../usermod_audio_classifier.h ../usermod_audio_classifier.cpp usermods/AudioClassifier/
           cp ../examples/platformio_override.ini ./platformio_override.ini
-          # Point custom_usermods to the parent repository checkout
-          sed -i 's|https://github.com/Steppschuh/wled-usermod-audio-classifier.git|..|g' platformio_override.ini
+          sed -i 's|https://github.com/Steppschuh/wled-usermod-audio-classifier.git|AudioClassifier|g' platformio_override.ini
 
       - name: Compile ESP32 Binary
         run: |

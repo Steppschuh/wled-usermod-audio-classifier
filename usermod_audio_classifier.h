@@ -1,7 +1,13 @@
 #pragma once
 
 #include "wled.h"
-#include <driver/i2s.h>
+#include <esp_idf_version.h>
+
+#if ESP_IDF_VERSION_MAJOR >= 5
+  #include <driver/i2s_std.h>
+#else
+  #include <driver/i2s.h>
+#endif
 #include <math.h>
 
 #ifndef USERMOD_ID_AUDIO_CLASSIFIER
@@ -64,6 +70,72 @@ private:
   float energyHistory[8] = {0};
   uint8_t energyHistoryIdx = 0;
 
+#if ESP_IDF_VERSION_MAJOR >= 5
+  i2s_chan_handle_t _rx_handle = nullptr;
+
+  bool initI2S() {
+    if (i2sInitialized) return true;
+    if (i2sSd < 0 || i2sWs < 0 || i2sSck < 0) return false;
+
+    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+    chan_cfg.dma_desc_num = 4;
+    chan_cfg.dma_frame_num = SAMPLE_BLOCK_SIZE;
+
+    esp_err_t err = i2s_new_channel(&chan_cfg, nullptr, &_rx_handle);
+    if (err != ESP_OK) return false;
+
+    i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000);
+    i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO);
+    slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;
+
+    i2s_std_config_t std_cfg = {
+      .clk_cfg = clk_cfg,
+      .slot_cfg = slot_cfg,
+      .gpio_cfg = {
+        .mclk = I2S_GPIO_UNUSED,
+        .bclk = (gpio_num_t)i2sSck,
+        .ws = (gpio_num_t)i2sWs,
+        .dout = I2S_GPIO_UNUSED,
+        .din = (gpio_num_t)i2sSd,
+        .invert_flags = { .mclk_inv = false, .bclk_inv = false, .ws_inv = false }
+      }
+    };
+
+    err = i2s_channel_init_std_mode(_rx_handle, &std_cfg);
+    if (err != ESP_OK) {
+      i2s_del_channel(_rx_handle);
+      _rx_handle = nullptr;
+      return false;
+    }
+
+    err = i2s_channel_enable(_rx_handle);
+    if (err != ESP_OK) {
+      i2s_del_channel(_rx_handle);
+      _rx_handle = nullptr;
+      return false;
+    }
+
+    i2sInitialized = true;
+    return true;
+  }
+
+  void deinitI2S() {
+    if (i2sInitialized && _rx_handle) {
+      i2s_channel_disable(_rx_handle);
+      i2s_del_channel(_rx_handle);
+      _rx_handle = nullptr;
+      i2sInitialized = false;
+    }
+  }
+
+  size_t readI2SSamples(int32_t* buffer, size_t maxSamples) {
+    if (!i2sInitialized || !_rx_handle) return 0;
+    size_t bytesRead = 0;
+    esp_err_t err = i2s_channel_read(_rx_handle, buffer, maxSamples * sizeof(int32_t), &bytesRead, 10 / portTICK_PERIOD_MS);
+    if (err != ESP_OK || bytesRead == 0) return 0;
+    return bytesRead / sizeof(int32_t);
+  }
+#else
   bool initI2S() {
     if (i2sInitialized) return true;
     if (i2sSd < 0 || i2sWs < 0 || i2sSck < 0) return false;
@@ -73,7 +145,11 @@ private:
       .sample_rate = 16000,
       .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
       .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
       .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_STAND_I2S),
+#else
+      .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB),
+#endif
       .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
       .dma_buf_count = 4,
       .dma_buf_len = SAMPLE_BLOCK_SIZE,
@@ -109,14 +185,19 @@ private:
     }
   }
 
+  size_t readI2SSamples(int32_t* buffer, size_t maxSamples) {
+    if (!i2sInitialized) return 0;
+    size_t bytesRead = 0;
+    esp_err_t result = i2s_read(I2S_NUM_0, buffer, maxSamples * sizeof(int32_t), &bytesRead, 10 / portTICK_PERIOD_MS);
+    if (result != ESP_OK || bytesRead == 0) return 0;
+    return bytesRead / sizeof(int32_t);
+  }
+#endif
+
   void processAudioBlock() {
     if (!i2sInitialized) return;
 
-    size_t bytesRead = 0;
-    esp_err_t result = i2s_read(I2S_NUM_0, sampleBuffer, sizeof(sampleBuffer), &bytesRead, 10 / portTICK_PERIOD_MS);
-    if (result != ESP_OK || bytesRead == 0) return;
-
-    size_t samples = bytesRead / sizeof(int32_t);
+    size_t samples = readI2SSamples(sampleBuffer, SAMPLE_BLOCK_SIZE);
     if (samples == 0) return;
 
     // Calculate RMS & Peak
@@ -195,7 +276,8 @@ private:
   }
 
   void publishHomeAssistantDiscovery() {
-    if (!WLED_MQTT_CONNECTED() || !haDiscoveryEnabled) return;
+#ifndef WLED_DISABLE_MQTT
+    if (!WLED_MQTT_CONNECTED || !haDiscoveryEnabled) return;
 
     String chipId = String((uint32_t)ESP.getEfuseMac(), HEX);
     String devName = (serverDescription[0] != '\0') ? String(serverDescription) : "WLED Audio Classifier";
@@ -248,10 +330,12 @@ private:
     }
 
     discoveryPublished = true;
+#endif
   }
 
   void publishTelemetry() {
-    if (!WLED_MQTT_CONNECTED()) return;
+#ifndef WLED_DISABLE_MQTT
+    if (!WLED_MQTT_CONNECTED) return;
 
     String baseTopic = "wled/" + String(mqttClientID) + "/audio/";
 
@@ -259,6 +343,7 @@ private:
     mqtt->publish((baseTopic + "state").c_str(), 0, false, audioState.c_str());
     mqtt->publish((baseTopic + "music").c_str(), 0, false, musicActive ? "ON" : "OFF");
     mqtt->publish((baseTopic + "phrase").c_str(), 0, false, phraseState.c_str());
+#endif
   }
 
 public:
@@ -279,23 +364,27 @@ public:
       processAudioBlock();
     }
 
-    // Publish telemetry to MQTT / Home Assistant every 1 second (or on phrase state changes)
+    // Publish telemetry to MQTT / Home Assistant every 1 second
+#ifndef WLED_DISABLE_MQTT
     if (now - lastTelemetryPublish >= 1000) {
       lastTelemetryPublish = now;
-      if (WLED_MQTT_CONNECTED()) {
+      if (WLED_MQTT_CONNECTED) {
         if (!discoveryPublished && haDiscoveryEnabled) {
           publishHomeAssistantDiscovery();
         }
         publishTelemetry();
       }
     }
+#endif
   }
 
   void onMqttConnect(bool sessionPresent) override {
+#ifndef WLED_DISABLE_MQTT
     discoveryPublished = false;
     if (haDiscoveryEnabled) {
       publishHomeAssistantDiscovery();
     }
+#endif
   }
 
   void addToJsonInfo(JsonObject& root) override {
@@ -345,17 +434,3 @@ public:
     return USERMOD_ID_AUDIO_CLASSIFIER;
   }
 };
-
-// PROGMEM String definitions
-const char AudioClassifierUsermod::_name[]             PROGMEM = "AudioClassifier";
-const char AudioClassifierUsermod::_enabled[]          PROGMEM = "enabled";
-const char AudioClassifierUsermod::_haDiscovery[]      PROGMEM = "ha-discovery";
-const char AudioClassifierUsermod::_pinSD[]            PROGMEM = "pin-sd";
-const char AudioClassifierUsermod::_pinWS[]            PROGMEM = "pin-ws";
-const char AudioClassifierUsermod::_pinSCK[]           PROGMEM = "pin-sck";
-const char AudioClassifierUsermod::_dbOffset[]         PROGMEM = "db-offset";
-const char AudioClassifierUsermod::_silenceThreshold[] PROGMEM = "silence-threshold-db";
-
-// Register usermod dynamically
-static AudioClassifierUsermod audioClassifier;
-REGISTER_USERMOD(audioClassifier);
