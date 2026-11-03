@@ -1,0 +1,63 @@
+name: Build Firmware Binaries
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build WLED with Audio Classifier
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Usermod Repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+
+      - name: Clone WLED Core
+        run: |
+          git clone --depth 1 https://github.com/wled/WLED.git wled-core
+
+      - name: Configure Usermod in WLED
+        run: |
+          cd wled-core
+          cp ../examples/platformio_override.ini ./platformio_override.ini
+          # Point custom_usermods to the parent repository checkout
+          sed -i 's|https://github.com/Steppschuh/wled-usermod-audio-classifier.git|..|g' platformio_override.ini
+
+      - name: Compile ESP32 Binary
+        run: |
+          cd wled-core
+          pio run -e esp32_audio_classifier
+
+      - name: Rename and Stage Artifact
+        run: |
+          mkdir -p build_output
+          cp wled-core/.pio/build/esp32_audio_classifier/firmware.bin build_output/wled_audio_classifier_esp32.bin
+
+      - name: Upload Firmware Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wled_audio_classifier_esp32
+          path: build_output/wled_audio_classifier_esp32.bin
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build_output/wled_audio_classifier_esp32.bin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

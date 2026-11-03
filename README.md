@@ -50,7 +50,22 @@ If using a standard ESP32 development board with an INMP441 breakout:
 
 ---
 
-## 📦 Installation in WLED
+## 🚀 Beginner Quick Start: Flashing Your Device
+
+> **Never compiled code before?** No problem! If your WLED controller is already running on your WiFi, you can flash this usermod in 2 minutes right from your web browser without writing any code or installing software.
+
+1. **Download Firmware**: Head to **[Releases](https://github.com/Steppschuh/wled-usermod-audio-classifier/releases)** and download `wled_audio_classifier_esp32.bin`.
+2. **Open WLED Web UI**: Open your controller's interface in your browser (`http://<wled-ip>` or `http://wled.local`).
+3. **Go to Manual OTA**: Click **Config (⚙️) > Security & Updates**.
+4. **Upload Binary**: Under **Manual OTA Update**, click **Choose File**, select `wled_audio_classifier_esp32.bin`, and click **Update!**.
+5. **Reboot**: The device reboots after ~30 seconds, preserving your existing LED and WiFi settings.
+6. **Verify**: Open **Config > Usermods** to see `AudioClassifier` settings.
+
+📖 For complete step-by-step instructions (including flashing brand new boards over USB via your web browser), read the **[Beginner Flashing Guide](docs/flashing-guide.md)**.
+
+---
+
+## 📦 Installation in WLED (For Developers)
 
 This usermod uses WLED 0.14+ / 0.16+ external usermod support.
 
@@ -94,4 +109,4 @@ In the WLED web UI, navigate to **Config > Usermods**:
 
 ## 📄 License
 
-MIT License. See [LICENSE](LICENSE) for details.
+Licensed under the **European Union Public Licence v1.2** ([EUPL-1.2](LICENSE)).
