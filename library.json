@@ -1,8 +1,8 @@
 {
   "name": "wled-usermod-audio-classifier",
   "version": "0.1.0",
-  "description": "WLED Usermod turning commercial ESP32 WLED+MIC controllers into edge audio sensors that measure dB SPL, classify silence vs music, and track phrasing, reporting directly to Home Assistant via MQTT Auto-Discovery.",
-  "keywords": "wled, usermod, audio, classifier, music, home-assistant, mqtt, spl, noisemeter, gledopto, esp32",
+  "description": "WLED Usermod coupling with AudioReactive to provide ambient sound presence, relative sound level, and structural phrasing telemetry to Home Assistant via MQTT Auto-Discovery.",
+  "keywords": "wled, usermod, audio, classifier, music, home-assistant, mqtt, presence, gledopto, esp32",
   "license": "EUPL-1.2",
   "repository": {
     "type": "git",
@@ -14,8 +14,9 @@
       "url": "https://github.com/Steppschuh"
     }
   ],
+  "frameworks": "arduino",
+  "platforms": "espressif32",
   "build": {
-    "libArchive": false,
-    "srcFilter": ["+<*>", "-<examples>"]
+    "libArchive": false
   }
 }

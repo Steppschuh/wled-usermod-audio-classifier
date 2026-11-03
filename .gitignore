@@ -1,9 +1,18 @@
+# PlatformIO
 .pio/
 .vscode/
 .idea/
+*.code-workspace
+
+# Build artifacts
 *.o
 *.a
 *.bin
 *.elf
 *.hex
+wled-core/
+build_output/
+
+# OS specific
 .DS_Store
+Thumbs.db

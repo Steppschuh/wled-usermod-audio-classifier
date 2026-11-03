@@ -8,57 +8,141 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-jobs:
-  build:
-    name: Build WLED with Audio Classifier
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+jobs:
+  test-native:
+    name: Run Native Unit Tests
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout Usermod Repo
+      - name: Checkout Repo
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install PlatformIO
         run: |
           python -m pip install --upgrade pip
           pip install platformio
 
-      - name: Clone WLED Core
+      - name: Run Native Unit Tests
         run: |
-          git clone --depth 1 https://github.com/wled/WLED.git wled-core
+          pio test -e native
 
-      - name: Configure Usermod in WLED
+  build-firmware:
+    name: Build WLED Firmware (${{ matrix.env }})
+    needs: test-native
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [esp32dev, esp32dev_V4]
+
+    env:
+      WLED_REF: c82769893143b488cbd1f6f12abc13c454f08645
+
+    steps:
+      - name: Checkout Usermod Repo
+        uses: actions/checkout@v4
+        with:
+          path: usermod-repo
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-pio-${{ matrix.env }}-${{ env.WLED_REF }}
+          restore-keys: |
+            ${{ runner.os }}-pio-${{ matrix.env }}-
+            ${{ runner.os }}-pio-
+
+      - name: Install PlatformIO and esptool
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio esptool
+
+      - name: Clone Pinned WLED Core
+        run: |
+          git clone https://github.com/wled/WLED.git wled-core
+          cd wled-core
+          git checkout ${{ env.WLED_REF }}
+
+      - name: Configure Usermod via platformio_override.ini
+        run: |
+          cat <<EOF > wled-core/platformio_override.ini
+          [platformio]
+          default_envs = ${{ matrix.env }}
+
+          [env:${{ matrix.env }}]
+          custom_usermods =
+            \${common.default_usermods}
+            symlink://${{ github.workspace }}/usermod-repo
+          EOF
+
+      - name: Compile WLED Binary
         run: |
           cd wled-core
-          mkdir -p usermods/AudioClassifier
-          cp ../library.json ../usermod_audio_classifier.h ../usermod_audio_classifier.cpp usermods/AudioClassifier/
-          cp ../examples/platformio_override.ini ./platformio_override.ini
-          sed -i 's|https://github.com/Steppschuh/wled-usermod-audio-classifier.git|AudioClassifier|g' platformio_override.ini
+          pio run -e ${{ matrix.env }}
 
-      - name: Compile ESP32 Binary
-        run: |
-          cd wled-core
-          pio run -e esp32_audio_classifier
-
-      - name: Rename and Stage Artifact
+      - name: Package Firmware Binaries (OTA and Factory)
         run: |
           mkdir -p build_output
-          cp wled-core/.pio/build/esp32_audio_classifier/firmware.bin build_output/wled_audio_classifier_esp32.bin
+          BUILD_DIR="wled-core/.pio/build/${{ matrix.env }}"
+          
+          # 1. Copy OTA binary
+          cp "${BUILD_DIR}/firmware.bin" "build_output/wled_audio_classifier_${{ matrix.env }}_ota.bin"
 
-      - name: Upload Firmware Artifact
+          # 2. Assemble factory binary (bootloader + partitions + boot_app0 + app at 0x0)
+          if [ -f "${BUILD_DIR}/bootloader.bin" ] && [ -f "${BUILD_DIR}/partitions.bin" ]; then
+            BOOT_APP0=$(find ~/.platformio/packages -name "boot_app0.bin" 2>/dev/null | head -n 1)
+            if [ -n "$BOOT_APP0" ]; then
+              esptool.py --chip esp32 merge_bin -o "build_output/wled_audio_classifier_${{ matrix.env }}_factory.bin" \
+                --flash_mode dio --flash_size 4MB \
+                0x1000 "${BUILD_DIR}/bootloader.bin" \
+                0x8000 "${BUILD_DIR}/partitions.bin" \
+                0xe000 "$BOOT_APP0" \
+                0x10000 "${BUILD_DIR}/firmware.bin"
+            fi
+          fi
+
+          # 3. Compute Checksums
+          cd build_output
+          sha256sum *.bin > SHA256SUMS
+
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: wled_audio_classifier_esp32
-          path: build_output/wled_audio_classifier_esp32.bin
+          name: wled_audio_classifier_${{ matrix.env }}
+          path: build_output/*
 
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/v')
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-firmware
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release_artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: build_output/wled_audio_classifier_esp32.bin
+          files: release_artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
