@@ -15,7 +15,7 @@ This [WLED](https://github.com/wled/WLED) Usermod (V2) bridges the gap between W
 PIR motion sensors miss people sitting still, and mmWave radars cannot tell if a room is active with music, conversation, or media playback. Since commercial WLED controllers (like the **Gledopto GL-C-015WL-D / GL-C-010WL**) and DIY builds often live in central rooms with built-in microphones, this usermod turns them into dual-purpose devices:
 
 1. **Keep your light shows**: Audio-reactive LED effects continue running in real time.
-2. **Power your automations**: Home Assistant gains debounced acoustic presence, sound levels, and room state classification (`silence`, `ambient_noise`, `music`) to trigger lights, media players, and scenes.
+2. **Power your automations**: Home Assistant gains debounced acoustic presence, sound levels, and room state classification (`Silence`, `Ambient Noise`, `Music`) to trigger lights, media players, and scenes.
 
 ---
 
@@ -36,14 +36,14 @@ When MQTT is connected, the following entities appear automatically under your W
 | Entity Name | Domain | Type | Values / Unit | Icon | Description |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`Audio Level RMS`** | `sensor` | Measurement | `0.0` – `100.0 %` | `mdi:volume-medium` | 1-second RMS average sound volume (updated at 1 Hz). |
-| **`Audio Level Peak`** | `sensor` | Measurement | `0.0` – `100.0 %` | `mdi:volume-maximum` | 1-second maximum sound peak (updated at 1 Hz). |
+| **`Audio Level Peak`** | `sensor` | Measurement | `0.0` – `100.0 %` | `mdi:volume-high` | 1-second maximum sound peak (updated at 1 Hz). |
 | **`Audio Detected`** | `binary_sensor` | `sound` | `ON` / `OFF` | `mdi:ear-hearing` | Debounced presence indicator for active sound in the room. |
-| **`Audio Type`** | `sensor` | `enum` | `silence`, `ambient_noise`, `music` | `mdi:waveform` | Contextual room acoustic state. |
+| **`Audio Type`** | `sensor` | `enum` | `Silence`, `Ambient Noise`, `Music` | `mdi:waveform` | Contextual room acoustic state. |
 | **`Audio Source Status`** | `sensor` | Diagnostic | Text | `mdi:microphone-outline` | Live coupling health with AudioReactive and microphone stream. |
-| **`Music Phrase`** | `sensor` | `enum` | `intro`, `verse`, `buildup`, `chorus`, `breakdown`, `outro` | `mdi:playlist-music` | Musical phrasing and song structure state (when `experimental-music` is enabled). |
+| **`Music Phrase`** | `sensor` | `enum` | `Intro`, `Verse`, `Buildup`, `Chorus`, `Breakdown`, `Outro` | `mdi:playlist-music` | Musical phrasing and song structure state (when `experimental-music` is enabled). |
 | **`Music Energy`** | `sensor` | Measurement | `0` – `100 %` | `mdi:lightning-bolt` | Dynamic track & acoustic energy level (0%: silence, 10%: noise, 30%: outro, 40%: breakdown, 50%: buildup, 60%: intro, 80%: verse, 100%: chorus). |
-| **`BPM`** | `sensor` | Measurement | `60` – `240 bpm` | `mdi:metronome` | Detected musical tempo / rhythm speed during active beat sections (`verse` / `chorus`). |
-| **`Music Beat Probability`** | `sensor` | Measurement | `0.0` – `100.0 %` | `mdi:drum` | Real-time beat presence probability based on low-frequency variance (0% = silence/noise/ambient, 100% = active bass/beat). |
+| **`BPM`** | `sensor` | Measurement | `60` – `240 bpm` | `mdi:metronome` | Detected musical tempo / rhythm speed. Locked during active beat sections (verse/chorus), held across breakdowns/bridges, and cleared to 0 when leaving music state. |
+| **`Music Beat Probability`** | `sensor` | Measurement | `0.0` – `100.0 %` | `mdi:pulse` | Real-time beat presence probability based on low-frequency variance (0% = silence/noise/ambient, 100% = active bass/beat). |
 
 ---
 
@@ -98,8 +98,8 @@ Configure under **Config > Usermods > AudioClassifier**:
 | **`Margin Above Floor`** | `4.0 %` | Trigger margin required above ambient noise floor. |
 | **`On Delay`** | `1200 ms` | Continuous sound duration required before triggering presence. |
 | **`Off Delay`** | `8000 ms` | Continuous silence duration required before clearing presence. |
-| **`Music Hold`** | `20000 ms` | Hold time in music state during quiet bridges/breakdowns. |
-| **`Experimental Music`** | `false` | Enable beat regularity and musical phrasing tracking (`intro`, `verse`, `buildup`, `chorus`, `breakdown`, `outro`). |
+| **`Music Hold`** | `30000 ms` | Hold time in music state during quiet bridges/breakdowns. |
+| **`Experimental Music`** | `false` | Enable beat regularity and musical phrasing tracking (`Intro`, `Verse`, `Buildup`, `Chorus`, `Breakdown`, `Outro`). |
 | **`Stream Raw`** | `false` | Stream raw audio frames over MQTT (`wled/<device>/audio/raw`) for analysis. |
 
 ### 2. AudioReactive Settings
@@ -170,11 +170,11 @@ Topics derive from WLED's configured MQTT Device Topic (`wled/<mac>`):
 | :--- | :--- | :--- | :--- |
 | `<device>/audio/level` | Float (`24.5`) | 1 Hz + Heartbeat | 1-second RMS average sound percentage |
 | `<device>/audio/peak` | Float (`45.2`) | 1 Hz + Heartbeat | 1-second maximum sound peak percentage |
-| `<device>/audio/detected` | `ON` / `OFF` | On change + Heartbeat | Debounced sound presence (also mirrored to `audio/sound`) |
+| `<device>/audio/detected` | `ON` / `OFF` | On change + Heartbeat | Debounced sound presence |
 | `<device>/audio/type` | String (`Silence`, `Ambient Noise`, `Music`) | On change + Heartbeat | Semantic acoustic type (also mirrored to `audio/state`) |
-| `<device>/audio/energy` | Integer (`0` – `100 %`) | 1 Hz + On change + Heartbeat | Track acoustic energy percentage |
+| `<device>/audio/energy` | Integer (`0` – `100`) | 1 Hz + On change + Heartbeat | Track acoustic energy percentage |
 | `<device>/audio/bpm` | Integer (`128`) | 1 Hz + On change + Heartbeat | Detected rhythm speed (BPM) |
-| `<device>/audio/beat_probability` | Float (`0.0%` – `100.0%`) | 1 Hz + Heartbeat | Beat presence probability based on low-frequency variance |
+| `<device>/audio/beat_probability` | Float (`0.0` – `100.0`) | 1 Hz + Heartbeat | Beat presence probability based on low-frequency variance |
 | `<device>/audio/phrase` | String (`Intro`, `Verse`, `Buildup`, `Chorus`, `Breakdown`, `Outro`) | On change + Heartbeat | Phrasing state (if enabled) |
 | `<device>/audio/status` | String (diagnostic message) | On change + Heartbeat | AudioReactive coupling state |
 

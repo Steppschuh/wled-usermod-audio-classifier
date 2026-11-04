@@ -364,8 +364,9 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
   }
 
   String base = getBaseTopic();
+  bool publishedAny = false;
 
-  // Publish periodic / on-change telemetry
+  // Publish 1 Hz periodic telemetry
   if (force || timeForLevel || timeForHeartbeat) {
     char lvlBuf[16];
     snprintf(lvlBuf, sizeof(lvlBuf), "%.1f", classifier.getAverageLevelPercent());
@@ -375,6 +376,15 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
     snprintf(pkBuf, sizeof(pkBuf), "%.1f", classifier.getPeakLevelPercent());
     mqtt->publish((base + "peak").c_str(), 0, false, pkBuf);
 
+    char probBuf[16];
+    snprintf(probBuf, sizeof(probBuf), "%.1f", classifier.getBeatProbabilityPercent());
+    mqtt->publish((base + "beat_probability").c_str(), 0, false, probBuf);
+
+    publishedAny = true;
+  }
+
+  // Publish 1 Hz + On change + Heartbeat metrics (energy and bpm)
+  if (force || timeForLevel || stateChanged || timeForHeartbeat) {
     char nrgBuf[8];
     snprintf(nrgBuf, sizeof(nrgBuf), "%u", soundEnergy);
     mqtt->publish((base + "energy").c_str(), 0, false, nrgBuf);
@@ -383,13 +393,10 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
     snprintf(bpmBuf, sizeof(bpmBuf), "%u", bpm);
     mqtt->publish((base + "bpm").c_str(), 0, false, bpmBuf);
 
-    char probBuf[16];
-    snprintf(probBuf, sizeof(probBuf), "%.1f", classifier.getBeatProbabilityPercent());
-    mqtt->publish((base + "beat_probability").c_str(), 0, false, probBuf);
-
-    lastPubTime = now;
+    publishedAny = true;
   }
 
+  // Publish state change / heartbeat telemetry
   if (force || stateChanged || timeForHeartbeat) {
     mqtt->publish((base + "detected").c_str(), 0, false, soundState ? "ON" : "OFF");
     mqtt->publish((base + "type").c_str(), 0, false, classifier.getSemanticStateStr());
@@ -403,6 +410,12 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
     lastSoundEnergy = soundEnergy;
     lastBpm = bpm;
     lastSourceStatus = srcStatus;
+
+    publishedAny = true;
+  }
+
+  if (publishedAny) {
+    lastPubTime = now;
   }
 
   if (timeForHeartbeat || force) {
