@@ -98,14 +98,14 @@ pio run -e esp32dev -t upload
 ## ⚙️ Configuration & Tuning
 
 ### 1. AudioReactive Settings
-Open **Config > Usermods > AudioReactive** to ensure optimal audio acquisition:
+Open **Config > Usermods > AudioReactive** to configure the audio input stage:
 
-| Setting | Recommended | Purpose |
+| Setting | Recommended | Meaning & Impact |
 | :--- | :--- | :--- |
 | **`enabled`** | `Checked` | Required for audio acquisition. |
-| **`AGC` (Gain Control)** | `0 (Off)` or `1 (Normal)` | When Off, relative level reflects true room sound dynamics. |
-| **`squelch`** | `5` – `15` | Baseline noise gate setting. |
-| **`gain`** | `40` – `80` | Adjust so normal conversation sits around 15–35% in AudioClassifier status. |
+| **`AGC` (Gain Control)** | **`0 (Off)`** | **`0 (Off)`** provides true room dynamics (recommended for acoustic presence).<br>**`1 (Normal)`** or **`3 (Lazy)`**: Adapts gain over time for lighting effects while keeping sensing usable.<br>**`2 (Vivid)`**: Aggressively boosts quiet sounds, causing volume levels to float. |
+| **`squelch`** | `4` – `10` | Baseline noise gate. Cuts out microphone electrical self-noise and inaudible hiss. |
+| **`gain`** | `40` – `70` | Digital amplification multiplier. Scales signal so normal conversation hits ~20–35%. |
 
 #### Diagnostic Statuses
 The info modal (ℹ️) and Home Assistant report coupling health:
@@ -131,10 +131,44 @@ Configure under **Config > Usermods > AudioClassifier**:
 | **`experimental-music`** | bool | `false` | — | Enable beat regularity and musical phrasing tracking (`steady`, `buildup`, `breakdown`, `drop`). |
 | **`stream-raw`** | bool | `false` | — | Stream raw audio frames over MQTT (`wled/<device>/audio/raw`) for analysis. |
 
-### 3. Quick Calibration Tips
-- **Quiet Threshold**: Leave the room quiet with normal background noise (HVAC, fans). Check the level in the WLED info dialog (e.g. `3.2%`), then set `quiet-threshold` 2–3% above that value (e.g. `5.5%` or `6.0%`).
-- **Presence Delay**: If brief noises (closing doors, footfalls) cause unwanted activations, increase `on-delay` (e.g. `1500`–`2000 ms`).
-- **Absence Delay**: If room automations turn off during quiet pauses between songs, increase `off-delay` (e.g. `10000`–`15000 ms`).
+### 3. Step-by-Step Calibration Guide
+
+Follow this 3-step procedure using WLED's live status readouts (in the **Info modal ℹ️** or Home Assistant `Sound Level`):
+
+#### Step 1: Calibrate Squelch (Noise Gate)
+1. Keep the room **completely quiet** (no speech, no media, only resting ambient background).
+2. In **Config > Usermods > AudioReactive**, set **`AGC` to `0 (Off)`**, **`Gain` to `50`**, and **`Squelch` to `0`**. Save.
+3. Observe `Sound Level (%)`. With squelch at `0`, microphone electrical self-noise will typically produce a jittery `2% – 8%` reading.
+4. Increase **`Squelch` in steps of +2** (e.g. `2`, `4`, `6`, `8`...) and save until the silent room baseline drops to **`0.0% – 1.0%`**.
+   * *Typical values*: `4`–`8` for I2S/PDM digital microphones, `8`–`15` for analog microphones.
+
+#### Step 2: Calibrate Gain (Sensitivity)
+1. Speak at your **normal conversational volume** from where you typically sit in the room (or play typical background music).
+2. Check the live `Sound Level (%)`:
+   * **Target**: Conversational speech should register around **`20% – 35%`**.
+   * **Target**: Loud claps or hand gestures should peak around **`70% – 90%`** without constantly clipping at `100%`.
+3. Adjust **`Gain`**:
+   * If normal speech registers below `15%`: Increase Gain (e.g. `65`–`80`).
+   * If normal speech easily pegs at `80% – 100%`: Decrease Gain (e.g. `35`–`45`).
+   * *Typical values*: `40`–`70`.
+
+#### Step 3: Set AudioClassifier Thresholds
+1. With Squelch and Gain dialed in, observe the resting room baseline with normal background sounds (HVAC, fans) running (e.g. `2.5%`).
+2. In **Config > Usermods > AudioClassifier**:
+   * Set **`quiet-threshold`** to **~2% – 3% above** your quiet room baseline (e.g. `5.0%` for a `2.5%` baseline).
+   * Leave **`margin-above-floor`** at `4.0%` (sound must rise 4% above the rolling ambient floor to trigger).
+   * If brief transient noises (footfalls, closing doors) trigger presence, increase **`on-delay`** (`1500`–`2000 ms`).
+   * If presence clears during quiet song bridges or pauses between tracks, increase **`off-delay`** (`10000`–`15000 ms`).
+
+#### Quick Troubleshooting
+
+| Symptom | Cause | Action |
+| :--- | :--- | :--- |
+| Baseline never drops to `0–1%` in dead silence | Squelch too low | **Increase Squelch** (+2) |
+| Whispers or soft speaking aren't detected | Squelch too high | **Decrease Squelch** (-2) |
+| Normal speech registers below `15%` | Gain too low | **Increase Gain** |
+| Ambient background triggers high volume | Gain too high | **Decrease Gain** |
+| Reported volume drifts or floats over time | AudioReactive AGC enabled | **Set AGC to `0 (Off)`** |
 
 ---
 
