@@ -11,13 +11,13 @@
 // PROGMEM Key Definitions
 const char AudioClassifierUsermod::_name[]           PROGMEM = "AudioClassifier";
 const char AudioClassifierUsermod::_enabled[]        PROGMEM = "enabled";
-const char AudioClassifierUsermod::_haDiscovery[]    PROGMEM = "ha-discovery";
-const char AudioClassifierUsermod::_quietThreshold[] PROGMEM = "quiet-threshold-percent";
+const char AudioClassifierUsermod::_haDiscovery[]    PROGMEM = "mqtt-auto-discovery";
+const char AudioClassifierUsermod::_quietThreshold[] PROGMEM = "quiet-threshold";
 const char AudioClassifierUsermod::_marginFloor[]    PROGMEM = "margin-above-floor";
-const char AudioClassifierUsermod::_onDelay[]        PROGMEM = "on-delay-ms";
-const char AudioClassifierUsermod::_offDelay[]       PROGMEM = "off-delay-ms";
+const char AudioClassifierUsermod::_onDelay[]        PROGMEM = "on-delay";
+const char AudioClassifierUsermod::_offDelay[]       PROGMEM = "off-delay";
 const char AudioClassifierUsermod::_experimental[]   PROGMEM = "experimental-music";
-const char AudioClassifierUsermod::_musicHold[]      PROGMEM = "music-hold-ms";
+const char AudioClassifierUsermod::_musicHold[]      PROGMEM = "music-hold";
 const char AudioClassifierUsermod::_streamRaw[]      PROGMEM = "stream-raw";
 
 void AudioClassifierUsermod::setup() {
@@ -128,12 +128,12 @@ void AudioClassifierUsermod::addToConfig(JsonObject& root) {
   JsonObject top = root.createNestedObject(FPSTR(_name));
   top[FPSTR(_enabled)] = enabled;
   top[FPSTR(_haDiscovery)] = haDiscoveryEnabled;
-  top[FPSTR(_experimental)] = experimentalEnabled;
   top[FPSTR(_quietThreshold)] = config.quietThresholdPercent;
   top[FPSTR(_marginFloor)] = config.marginAboveFloorPercent;
   top[FPSTR(_onDelay)] = config.onDelayMs;
   top[FPSTR(_offDelay)] = config.offDelayMs;
   top[FPSTR(_musicHold)] = config.musicHoldMs;
+  top[FPSTR(_experimental)] = experimentalEnabled;
   top[FPSTR(_streamRaw)] = rawStreamEnabled;
 }
 
@@ -176,12 +176,11 @@ bool AudioClassifierUsermod::readFromConfig(JsonObject& root) {
 }
 
 void AudioClassifierUsermod::appendConfigData() {
-  oappend(SET_F("addInfo('AudioClassifier:quiet-threshold-percent', 1, 'Relative noise floor % cutoff');"));
-  oappend(SET_F("addInfo('AudioClassifier:on-delay-ms', 1, 'Debounce time to detect sound (ms)');"));
-  oappend(SET_F("addInfo('AudioClassifier:off-delay-ms', 1, 'Debounce time to return to quiet (ms)');"));
-  oappend(SET_F("addInfo('AudioClassifier:music-hold-ms', 1, 'Hold time in music state during breakdowns/quiet passages (ms)');"));
-  oappend(SET_F("addInfo('AudioClassifier:experimental-music', 1, 'Enable experimental music & phrase detection');"));
-  oappend(SET_F("addInfo('AudioClassifier:stream-raw', 1, 'Stream raw audio frames over MQTT for recording');"));
+  oappend(SET_F("addInfo('AudioClassifier:quiet-threshold', 1, ' %');"));
+  oappend(SET_F("addInfo('AudioClassifier:margin-above-floor', 1, ' %');"));
+  oappend(SET_F("addInfo('AudioClassifier:on-delay', 1, ' ms');"));
+  oappend(SET_F("addInfo('AudioClassifier:off-delay', 1, ' ms');"));
+  oappend(SET_F("addInfo('AudioClassifier:music-hold', 1, ' ms');"));
 }
 
 // Register usermod dynamically in WLED
