@@ -17,7 +17,7 @@ void test_initial_state_is_quiet_and_silence(void) {
   TEST_ASSERT_EQUAL_UINT8(SoundPresence::QUIET, classifier.getPresence());
   TEST_ASSERT_FALSE(classifier.isSoundDetected());
   TEST_ASSERT_EQUAL_STRING("silence", classifier.getSemanticStateStr());
-  TEST_ASSERT_EQUAL_STRING("steady", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_STRING("verse", classifier.getPhraseStateStr());
 }
 
 void test_transient_noise_ignored(void) {
@@ -171,6 +171,32 @@ void test_experimental_beat_and_phrasing(void) {
   TEST_ASSERT_TRUE(classifier.isSoundDetected());
   TEST_ASSERT_EQUAL_STRING("music", classifier.getSemanticStateStr());
   TEST_ASSERT_TRUE(classifier.getMusicConfidence() >= 0.6f);
+  TEST_ASSERT_UINT16_WITHIN(5, 120, classifier.getBPM());
+  TEST_ASSERT_EQUAL_UINT8(100, classifier.getSoundEnergy()); // Climaxes to Chorus / Drop on initial bass explosion
+  TEST_ASSERT_EQUAL_STRING("chorus", classifier.getSoundEnergyStr());
+  TEST_ASSERT_EQUAL_STRING("drop", classifier.getPhraseStateStr());
+
+  // Continue steady groove past the initial phrase (> 12s)
+  for (uint32_t t = 8020; t <= 16000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 35.0f;
+    frame.bands[0] = 120;
+    frame.bands[1] = 100;
+    frame.bands[2] = 80;
+    frame.bands[8] = 40;
+    if (t - lastBeat >= 500) {
+      frame.isPeak = true;
+      lastBeat = t;
+    } else {
+      frame.isPeak = false;
+    }
+    classifier.processFrame(frame);
+  }
+
+  // Now smoothly stabilizes into VERSE (80%, steady)
+  TEST_ASSERT_EQUAL_UINT8(80, classifier.getSoundEnergy());
+  TEST_ASSERT_EQUAL_STRING("verse", classifier.getSoundEnergyStr());
+  TEST_ASSERT_EQUAL_STRING("verse", classifier.getPhraseStateStr());
 }
 
 void test_music_hangover_persists_across_breakdown(void) {

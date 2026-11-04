@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <math.h>
 #include "audio_frame.h"
 
 enum class SoundPresence : uint8_t {
@@ -19,10 +20,84 @@ enum class AudioSemanticState : uint8_t {
 };
 
 enum class MusicPhrase : uint8_t {
-  STEADY = 0,
-  BUILDUP = 1,
-  BREAKDOWN = 2,
-  DROP = 3
+  VERSE = 0,
+  INTRO = 1,
+  BUILDUP = 2,
+  BREAKDOWN = 3,
+  DROP = 4
+};
+
+enum class SoundEnergy : uint8_t {
+  SILENCE = 0,
+  NOISE = 10,
+  BREAKDOWN = 40,
+  BUILDUP = 50,
+  INTRO = 60,
+  VERSE = 80,
+  CHORUS = 100
+};
+
+template<size_t N>
+struct RollingBuffer {
+  float values[N] = {0.0f};
+  size_t index = 0;
+  size_t count = 0;
+
+  float minVal = 0.0f;
+  float maxVal = 0.0f;
+  float mean = 0.0f;
+  float rms = 0.0f;
+  float variance = 0.0f;
+  float stdDev = 0.0f;
+
+  void reset() {
+    for (size_t i = 0; i < N; i++) values[i] = 0.0f;
+    index = 0;
+    count = 0;
+    minVal = maxVal = mean = rms = variance = stdDev = 0.0f;
+  }
+
+  void add(float val) {
+    values[index] = val;
+    index = (index + 1) % N;
+    if (count < N) count++;
+  }
+
+  float getLatest() const {
+    if (count == 0) return 0.0f;
+    size_t lastIdx = (index + N - 1) % N;
+    return values[lastIdx];
+  }
+
+  void calculate() {
+    if (count == 0) {
+      minVal = maxVal = mean = rms = variance = stdDev = 0.0f;
+      return;
+    }
+    minVal = values[0];
+    maxVal = values[0];
+    float sum = 0.0f;
+    float sumSq = 0.0f;
+
+    for (size_t i = 0; i < count; i++) {
+      float v = values[i];
+      if (v < minVal) minVal = v;
+      if (v > maxVal) maxVal = v;
+      sum += v;
+      sumSq += v * v;
+    }
+
+    mean = sum / (float)count;
+    rms = sqrtf(sumSq / (float)count);
+
+    float diffSqSum = 0.0f;
+    for (size_t i = 0; i < count; i++) {
+      float diff = values[i] - mean;
+      diffSqSum += diff * diff;
+    }
+    variance = diffSqSum / (float)count;
+    stdDev = sqrtf(variance);
+  }
 };
 
 struct ClassifierConfig {
@@ -53,12 +128,18 @@ public:
   SoundPresence getPresence() const { return presence; }
   bool isSoundDetected() const { return presence == SoundPresence::SOUND; }
 
-  // Semantic & Phrasing Telemetry
+  // Semantic, Phrasing, Energy & BPM Telemetry
   AudioSemanticState getSemanticState() const { return semanticState; }
   const char* getSemanticStateStr() const;
   MusicPhrase getPhraseState() const { return phraseState; }
   const char* getPhraseStateStr() const;
   float getMusicConfidence() const { return musicConfidence; }
+  uint16_t getBPM() const { return beatsPerMinute; }
+  uint8_t getSoundEnergy() const { return (uint8_t)soundEnergy; }
+  const char* getSoundEnergyStr() const;
+  SoundEnergy getSoundEnergyState() const { return soundEnergy; }
+  uint8_t getExpectedBeatIndex() const { return expectedBeatIndex; }
+  uint8_t getExpectedBarIndex() const { return expectedBarIndex; }
 
 private:
   void update1sMetrics(uint32_t now);
@@ -98,18 +179,49 @@ private:
 
   // Experimental Classification & Phrasing
   AudioSemanticState semanticState = AudioSemanticState::SILENCE;
-  MusicPhrase phraseState = MusicPhrase::STEADY;
+  MusicPhrase phraseState = MusicPhrase::VERSE;
+  SoundEnergy soundEnergy = SoundEnergy::SILENCE;
   float musicConfidence = 0.0f;
   uint32_t lastPhraseChangeMs = 0;
   uint32_t lastMusicEvidenceTime = 0;
   uint32_t lastFrameTimeMs = 0;
+  uint32_t lastEnergyUpdateTime = 0;
 
-  // Beat Tracking Memory
+  // Rolling Statistical Buffers (Rave-Totem architecture)
+  static constexpr size_t FEATURE_BUFFER_SIZE = 75; // 1.5 seconds at 50Hz (20ms)
+  RollingBuffer<FEATURE_BUFFER_SIZE> loudnessBuffer;
+  RollingBuffer<FEATURE_BUFFER_SIZE> bassBuffer;
+  RollingBuffer<FEATURE_BUFFER_SIZE> spreadBuffer;
+  RollingBuffer<FEATURE_BUFFER_SIZE> beatFeatureBuffer;
+  RollingBuffer<8> beatDelayBuffer; // Last 8 beat intervals (2 bars)
+
+  float maxLoudness = 20.0f;
+  float decayedMaxLoudness = 20.0f;
+  uint32_t lastMaxLoudnessTime = 0;
+  float averageLoudnessPercent = 0.0f;
+
+  // Beat & Tempo (BPM) Tracking
   static constexpr size_t MAX_BEATS = 16;
   uint32_t beatTimes[MAX_BEATS] = {0};
   size_t beatIdx = 0;
   size_t beatCount = 0;
   float beatRegularity = 0.0f;
+
+  uint32_t lastBeatTimestamp = 0;
+  uint16_t beatsPerMinute = 0;
+  uint32_t durationBetweenBeats = 0;
+  uint32_t durationBetweenBars = 0;
+  uint32_t durationBetweenPhrases = 0;
+  uint32_t lastBpmUpdateTime = 0;
+  uint32_t missedBeats = 0;
+  float expectedBeatProb = 0.0f;
+
+  // Drop Detection & 4/4 Phrase Grid Tracking
+  uint32_t lastDropTimestamp = 0;
+  uint32_t lastExpectedPhraseStart = 0;
+  uint8_t expectedBeatIndex = 0;
+  uint8_t expectedBarIndex = 0;
+  uint8_t expectedPhraseIndex = 0;
 
   // Energy & Phrasing Memory
   float prevBandsNorm[NUM_AUDIO_BANDS] = {0};

@@ -33,16 +33,44 @@ void AudioClassifier::reset() {
   pendingOffTime = 0;
 
   semanticState = AudioSemanticState::SILENCE;
-  phraseState = MusicPhrase::STEADY;
+  phraseState = MusicPhrase::VERSE;
+  soundEnergy = SoundEnergy::SILENCE;
   musicConfidence = 0.0f;
   lastPhraseChangeMs = 0;
   lastMusicEvidenceTime = 0;
   lastFrameTimeMs = 0;
+  lastEnergyUpdateTime = 0;
+
+  loudnessBuffer.reset();
+  bassBuffer.reset();
+  spreadBuffer.reset();
+  beatFeatureBuffer.reset();
+  beatDelayBuffer.reset();
+
+  maxLoudness = 20.0f;
+  decayedMaxLoudness = 20.0f;
+  lastMaxLoudnessTime = 0;
+  averageLoudnessPercent = 0.0f;
 
   for (size_t i = 0; i < MAX_BEATS; i++) beatTimes[i] = 0;
   beatIdx = 0;
   beatCount = 0;
   beatRegularity = 0.0f;
+
+  lastBeatTimestamp = 0;
+  beatsPerMinute = 0;
+  durationBetweenBeats = 0;
+  durationBetweenBars = 0;
+  durationBetweenPhrases = 0;
+  lastBpmUpdateTime = 0;
+  missedBeats = 0;
+  expectedBeatProb = 0.0f;
+
+  lastDropTimestamp = 0;
+  lastExpectedPhraseStart = 0;
+  expectedBeatIndex = 0;
+  expectedBarIndex = 0;
+  expectedPhraseIndex = 0;
 
   for (size_t i = 0; i < NUM_AUDIO_BANDS; i++) prevBandsNorm[i] = 0.0f;
   shortBassEnergy = 0.0f;
@@ -64,11 +92,25 @@ const char* AudioClassifier::getSemanticStateStr() const {
 
 const char* AudioClassifier::getPhraseStateStr() const {
   switch (phraseState) {
-    case MusicPhrase::STEADY:    return "steady";
+    case MusicPhrase::VERSE:     return "verse";
+    case MusicPhrase::INTRO:     return "intro";
     case MusicPhrase::BUILDUP:   return "buildup";
     case MusicPhrase::BREAKDOWN: return "breakdown";
     case MusicPhrase::DROP:      return "drop";
-    default:                     return "steady";
+    default:                     return "verse";
+  }
+}
+
+const char* AudioClassifier::getSoundEnergyStr() const {
+  switch (soundEnergy) {
+    case SoundEnergy::SILENCE:   return "silence";
+    case SoundEnergy::NOISE:     return "noise";
+    case SoundEnergy::BREAKDOWN: return "breakdown";
+    case SoundEnergy::BUILDUP:   return "buildup";
+    case SoundEnergy::INTRO:     return "intro";
+    case SoundEnergy::VERSE:     return "verse";
+    case SoundEnergy::CHORUS:    return "chorus";
+    default:                     return "silence";
   }
 }
 
@@ -104,7 +146,7 @@ void AudioClassifier::processFrame(const AudioFrame& frame) {
     bool hangoverActive = (lastMusicEvidenceTime > 0 && (now - lastMusicEvidenceTime <= config.musicHoldMs));
     if (!hangoverActive) {
       semanticState = AudioSemanticState::SILENCE;
-      phraseState = MusicPhrase::STEADY;
+      phraseState = MusicPhrase::VERSE;
       musicConfidence = 0.0f;
     } else {
       updateMusicAndPhrasing(frame);
@@ -207,20 +249,154 @@ void AudioClassifier::updatePresence(uint32_t now) {
 void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   if (!config.experimentalEnabled) {
     semanticState = AudioSemanticState::AMBIENT_NOISE;
-    phraseState = MusicPhrase::STEADY;
+    phraseState = MusicPhrase::VERSE;
+    soundEnergy = SoundEnergy::NOISE;
     musicConfidence = 0.0f;
+    beatsPerMinute = 0;
     return;
   }
 
   uint32_t now = frame.timestampMs;
 
-  // 1. Beat regularity tracking from AR isPeak events
+  // 1. Band Energy Distribution & Spectral Flux
+  float totalBandEnergy = 0.0f;
+  float bassEnergy = 0.0f;
+  for (size_t i = 0; i < NUM_AUDIO_BANDS; i++) {
+    totalBandEnergy += frame.bands[i];
+    if (i < 4) bassEnergy += frame.bands[i];
+  }
+
+  float bassRatio = (totalBandEnergy > 5.0f) ? (bassEnergy / totalBandEnergy) : 0.0f;
+  float bassPercent = (bassEnergy / 4.0f) * (100.0f / 255.0f);
+  float spread = fabsf(frame.rawVolume - frame.smoothedVolume) / 2.55f;
+
+  // 2. Feed 1.5s Rolling Feature Buffers (Rave-Totem architecture)
+  loudnessBuffer.add(frame.levelPercent);
+  loudnessBuffer.calculate();
+  bassBuffer.add(bassPercent);
+  bassBuffer.calculate();
+  spreadBuffer.add(spread);
+  spreadBuffer.calculate();
+
+  // 3. Track Decayed Maximum Loudness (5-minute peak hold with decay)
+  if (loudnessBuffer.rms > decayedMaxLoudness) {
+    maxLoudness = loudnessBuffer.rms;
+    decayedMaxLoudness = maxLoudness;
+    lastMaxLoudnessTime = now;
+  } else {
+    uint32_t dt = now - lastMaxLoudnessTime;
+    if (dt > 300000) {
+      float decay = 1.0f - ((float)(dt - 300000) / 300000.0f);
+      if (decay < 0.0f) decay = 0.0f;
+      float minDecayed = (maxLoudness * 0.5f > 15.0f) ? (maxLoudness * 0.5f) : 15.0f;
+      decayedMaxLoudness = (maxLoudness * decay > minDecayed) ? (maxLoudness * decay) : minDecayed;
+    }
+  }
+  averageLoudnessPercent = (decayedMaxLoudness > 0.1f) ? (100.0f * loudnessBuffer.rms / decayedMaxLoudness) : 0.0f;
+
+  // 4. Z-Score Onset Feature Extraction (beatFeature)
+  float bf1 = spreadBuffer.getLatest() - spreadBuffer.mean;
+  bf1 -= (1.0f * spreadBuffer.stdDev);
+  if (bf1 < 0.0f) bf1 = 0.0f;
+  bf1 = bf1 * bf1 - (3.0f * spreadBuffer.stdDev);
+  if (bf1 < 0.0f) bf1 = 0.0f;
+  bf1 = sqrtf(bf1);
+
+  float bf2 = bassBuffer.getLatest() - bassBuffer.mean;
+  bf2 -= (0.5f * bassBuffer.stdDev);
+  if (bf2 < 0.0f) bf2 = 0.0f;
+  bf2 = bf2 * bf2 - (3.0f * bassBuffer.stdDev);
+  if (bf2 < 0.0f) bf2 = 0.0f;
+  bf2 = sqrtf(bf2);
+
+  float beatFeature = (bf1 > bf2) ? bf1 : bf2;
   if (frame.isPeak) {
+    if (beatFeature < 20.0f) beatFeature = 20.0f;
+    else beatFeature *= 1.3f;
+  }
+  if (beatFeature > 100.0f) beatFeature = 100.0f;
+
+  beatFeatureBuffer.add(beatFeature);
+  beatFeatureBuffer.calculate();
+
+  // 5. Phase-Locked Beat Expectation & Dynamic Adaptive Thresholding
+  uint32_t durationSinceLastBeat = (lastBeatTimestamp > 0) ? (now - lastBeatTimestamp) : 10000;
+
+  if (durationBetweenBeats > 0) {
+    uint32_t lastBeatRef = ((now - lastBpmUpdateTime < 10 * durationBetweenBeats))
+                           ? lastBpmUpdateTime : lastBeatTimestamp;
+    uint32_t nextExpectedBeat = lastBeatRef + durationBetweenBeats;
+    int32_t deltaNext = (int32_t)(nextExpectedBeat - now);
+    missedBeats = 0;
+
+    if (deltaNext < 0) {
+      missedBeats = 2 + (uint32_t)((now - nextExpectedBeat) / durationBetweenBeats);
+      nextExpectedBeat = lastBeatRef + (missedBeats * durationBetweenBeats);
+      deltaNext = (int32_t)(nextExpectedBeat - now);
+    }
+    if (deltaNext > (int32_t)(durationBetweenBeats / 2)) {
+      deltaNext = (int32_t)durationBetweenBeats - deltaNext;
+    }
+    if (deltaNext < 0) deltaNext = -deltaNext;
+
+    expectedBeatProb = (float)(durationBetweenBeats - deltaNext) / (float)durationBetweenBeats;
+    expectedBeatProb = powf(expectedBeatProb, 5.0f);
+    if (expectedBeatProb > 1.0f) expectedBeatProb = 1.0f;
+    if (expectedBeatProb < 0.0f) expectedBeatProb = 0.0f;
+  } else {
+    expectedBeatProb = 0.0f;
+    missedBeats = 0;
+  }
+
+  const float BEAT_THRESH_MAX = 40.0f;
+  const float BEAT_THRESH_DEF = 16.0f;
+  const float BEAT_THRESH_MIN = 8.0f;
+  const uint32_t MIN_BEAT_DELAY = 250; // Max 240 BPM (250ms)
+
+  float beatThresh = BEAT_THRESH_MAX;
+  bool beatProbActive = (beatFeatureBuffer.rms > 2.0f);
+  bool enoughDelay = (durationSinceLastBeat > MIN_BEAT_DELAY);
+
+  if (beatProbActive && enoughDelay) {
+    float recency = 1.0f - ((float)MIN_BEAT_DELAY / (float)durationSinceLastBeat);
+    if (recency < 0.0f) recency = 0.0f;
+    if (recency > 1.0f) recency = 1.0f;
+    beatThresh -= 2.0f * (BEAT_THRESH_MAX - BEAT_THRESH_DEF) * recency;
+    if (beatThresh < BEAT_THRESH_DEF) beatThresh = BEAT_THRESH_DEF;
+    beatThresh -= 2.0f * (BEAT_THRESH_DEF - BEAT_THRESH_MIN) * expectedBeatProb;
+    if (beatThresh < BEAT_THRESH_MIN) beatThresh = BEAT_THRESH_MIN;
+  }
+
+  bool beatDetected = ((beatFeature > beatThresh || (frame.isPeak && beatFeature > BEAT_THRESH_MIN)) && enoughDelay);
+
+  if (beatDetected) {
     beatTimes[beatIdx] = now;
     beatIdx = (beatIdx + 1) % MAX_BEATS;
     if (beatCount < MAX_BEATS) beatCount++;
 
-    // Calculate regularity of inter-beat intervals in the last 6 seconds
+    if (lastBeatTimestamp > 0 && durationSinceLastBeat <= 1500) {
+      beatDelayBuffer.add((float)(durationSinceLastBeat / 10)); // stored in 10ms units
+      beatDelayBuffer.calculate();
+      if (beatDelayBuffer.count >= 4 && beatDelayBuffer.stdDev < 14.0f) {
+        float avgIntervalMs = beatDelayBuffer.mean * 10.0f;
+        if (avgIntervalMs >= 250.0f && avgIntervalMs <= 1000.0f) {
+          uint16_t curBpm = (uint16_t)roundf(60000.0f / avgIntervalMs);
+          while (curBpm < 60) curBpm *= 2;
+          while (curBpm > 240) curBpm /= 2;
+
+          if (curBpm >= 60 && curBpm <= 240) {
+            beatsPerMinute = curBpm;
+            durationBetweenBeats = (uint32_t)roundf(60000.0f / (float)curBpm);
+            durationBetweenBars = durationBetweenBeats * 4;
+            durationBetweenPhrases = durationBetweenBars * 4;
+            lastBpmUpdateTime = now;
+            beatRegularity = 0.90f;
+          }
+        }
+      }
+    }
+
+    // Inter-beat regularity from circular history
     if (beatCount >= 4) {
       float intervals[MAX_BEATS - 1];
       size_t validIntervals = 0;
@@ -230,7 +406,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
         size_t currIdx = (beatIdx + MAX_BEATS - i) % MAX_BEATS;
         size_t prevIdx = (beatIdx + MAX_BEATS - i - 1) % MAX_BEATS;
         uint32_t dt = beatTimes[currIdx] - beatTimes[prevIdx];
-        if (dt >= 280 && dt <= 1200) { // 50 to 214 BPM
+        if (dt >= 250 && dt <= 1200) {
           intervals[validIntervals++] = (float)dt;
           sumIntervals += dt;
         }
@@ -244,39 +420,95 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
           var += diff * diff;
         }
         float stddev = sqrtf(var / validIntervals);
-        float cv = stddev / (mean + 1.0f); // Coefficient of variation
+        float cv = stddev / (mean + 1.0f);
 
-        // CV < 0.25 indicates steady rhythmic metronome/beat
         if (cv < 0.25f) {
-          beatRegularity = 0.85f;
+          if (beatRegularity < 0.85f) beatRegularity = 0.85f;
+          if (beatsPerMinute == 0 && mean > 0.0f) {
+            uint16_t b = (uint16_t)roundf(60000.0f / mean);
+            while (b < 60) b *= 2;
+            while (b > 240) b /= 2;
+            beatsPerMinute = b;
+            durationBetweenBeats = (uint32_t)roundf(60000.0f / (float)b);
+            durationBetweenBars = durationBetweenBeats * 4;
+            durationBetweenPhrases = durationBetweenBars * 4;
+            lastBpmUpdateTime = now;
+          }
         } else if (cv < 0.40f) {
-          beatRegularity = 0.55f;
-        } else {
-          beatRegularity = 0.20f;
+          if (beatRegularity < 0.55f) beatRegularity = 0.55f;
         }
-      } else {
-        beatRegularity *= 0.95f;
       }
     }
+
+    lastBeatTimestamp = now;
+    durationSinceLastBeat = 0;
   } else {
     beatRegularity *= 0.995f;
+    if (durationSinceLastBeat > 3000) {
+      beatCount = 0;
+      beatDelayBuffer.reset();
+    }
+    if (durationSinceLastBeat > 10000 || presence == SoundPresence::QUIET) {
+      beatsPerMinute = 0;
+      durationBetweenBeats = 0;
+      durationBetweenBars = 0;
+      durationBetweenPhrases = 0;
+    }
   }
 
-  // 2. Band Energy Distribution & Spectral Flux
-  float totalBandEnergy = 0.0f;
-  float bassEnergy = 0.0f;
-  for (size_t i = 0; i < NUM_AUDIO_BANDS; i++) {
-    totalBandEnergy += frame.bands[i];
-    if (i < 4) bassEnergy += frame.bands[i];
+  // 6. Drop Detection & 4/4 Phrase Grid Tracking
+  float dropFeature = bassBuffer.getLatest() - bassBuffer.mean;
+  dropFeature -= (1.25f * bassBuffer.stdDev);
+  if (dropFeature < 0.0f) dropFeature = 0.0f;
+  dropFeature = dropFeature * dropFeature - (2.0f * bassBuffer.stdDev);
+  if (dropFeature < 0.0f) dropFeature = 0.0f;
+  dropFeature = sqrtf(dropFeature);
+  dropFeature += (spreadBuffer.getLatest() - spreadBuffer.mean) * 0.5f;
+
+  uint32_t durationSinceLastDrop = (lastDropTimestamp > 0) ? (now - lastDropTimestamp) : 999999;
+  float dropThresh = 4.0f * bassBuffer.stdDev;
+
+  if (lastExpectedPhraseStart > 0 && durationBetweenPhrases > 0) {
+    int32_t deltaPhrase = (int32_t)(now - (lastExpectedPhraseStart + durationBetweenPhrases));
+    float phraseFactor = (500.0f - fabsf((float)deltaPhrase)) / 500.0f;
+    if (phraseFactor < 0.0f) phraseFactor = 0.0f;
+    if (phraseFactor > 1.0f) phraseFactor = 1.0f;
+    dropThresh *= (1.0f - 0.25f * phraseFactor);
   }
 
-  float bassRatio = (totalBandEnergy > 5.0f) ? (bassEnergy / totalBandEnergy) : 0.0f;
+  if (soundEnergy == SoundEnergy::CHORUS) {
+    dropThresh *= 2.0f;
+  } else if (soundEnergy < SoundEnergy::VERSE) {
+    dropThresh *= 0.75f;
+  }
 
-  // 3. Classify Music vs Ambient Noise with Leaky Integrator, Hangover Timer & Hysteresis
+  if (dropThresh < 15.0f) dropThresh = 15.0f;
+  if (dropFeature > dropThresh && durationSinceLastDrop > 4000) {
+    lastDropTimestamp = now;
+    durationSinceLastDrop = 0;
+  }
+
+  if (lastDropTimestamp > 0 && durationBetweenBeats > 0) {
+    if (lastExpectedPhraseStart == 0 || lastDropTimestamp == now) {
+      lastExpectedPhraseStart = lastDropTimestamp;
+    }
+    uint32_t durSincePhrase = now - lastExpectedPhraseStart;
+    if (durSincePhrase >= durationBetweenPhrases) {
+      durSincePhrase %= durationBetweenPhrases;
+    }
+    lastExpectedPhraseStart = now - durSincePhrase;
+
+    uint32_t beatsSinceDrop = (now - lastDropTimestamp) / durationBetweenBeats;
+    expectedBeatIndex = beatsSinceDrop % 4;
+    expectedBarIndex = (beatsSinceDrop / 4) % 4;
+    expectedPhraseIndex = (beatsSinceDrop / 16);
+  }
+
+  // 7. Musical Evidence & Confidence Filter
   bool hasMusicalEvidence = false;
   float instantConfidence = 0.0f;
 
-  if (beatRegularity > 0.50f) {
+  if (beatRegularity > 0.50f && (now - lastBeatTimestamp <= 3000)) {
     hasMusicalEvidence = true;
     instantConfidence = beatRegularity;
   } else if (bassRatio > 0.35f && currentLevel > (noiseFloor + 5.0f)) {
@@ -284,70 +516,129 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     instantConfidence = 0.75f;
   }
 
-  // Update confidence score with asymmetrical attack/release
   if (hasMusicalEvidence) {
     lastMusicEvidenceTime = now;
-    // Fast attack: smoothly elevate confidence towards target
     musicConfidence = (musicConfidence * 0.85f) + (instantConfidence * 0.15f);
     if (musicConfidence > 1.0f) musicConfidence = 1.0f;
   } else {
-    // Slow release: confidence decays gradually over ~30s
     musicConfidence *= 0.999f;
   }
 
-  // State machine transition with configurable hangover protection
+  // 8. Acoustic State Machine Transitions with Hangover Protection
   if (semanticState == AudioSemanticState::MUSIC) {
     bool hangoverActive = (lastMusicEvidenceTime > 0 && (now - lastMusicEvidenceTime <= config.musicHoldMs));
     if (!hangoverActive) {
-      // Hold period expired: transition back down
       if (presence == SoundPresence::SOUND) {
         semanticState = AudioSemanticState::AMBIENT_NOISE;
+        soundEnergy = SoundEnergy::NOISE;
       } else {
         semanticState = AudioSemanticState::SILENCE;
+        soundEnergy = SoundEnergy::SILENCE;
       }
-      phraseState = MusicPhrase::STEADY;
+      phraseState = MusicPhrase::VERSE;
     }
-    // Otherwise, remain locked in MUSIC state (even during low-volume breakdowns/buildups)
   } else {
-    // In SILENCE or AMBIENT_NOISE: require confidence > 0.60 to enter MUSIC
-    if (musicConfidence >= 0.60f || (beatRegularity >= 0.70f && currentLevel > noiseFloor + 5.0f)) {
+    if (musicConfidence >= 0.60f || (beatRegularity >= 0.70f && currentLevel > noiseFloor + 5.0f) || (beatsPerMinute > 0 && currentLevel > noiseFloor + 4.0f)) {
       semanticState = AudioSemanticState::MUSIC;
       lastMusicEvidenceTime = now;
       if (musicConfidence < 0.70f) musicConfidence = 0.70f;
     } else if (presence == SoundPresence::SOUND) {
       semanticState = AudioSemanticState::AMBIENT_NOISE;
+      soundEnergy = SoundEnergy::NOISE;
     } else {
       semanticState = AudioSemanticState::SILENCE;
+      soundEnergy = SoundEnergy::SILENCE;
     }
   }
 
-  // 4. Phrasing State Machine (only evaluated when music is active)
+  // 9. Phrasing & SoundEnergy State Machine (Rave-Totem Algorithm)
   if (semanticState == AudioSemanticState::MUSIC) {
-    // Short-term bass (2s filter) vs Long-term bass (16s filter)
     shortBassEnergy = (shortBassEnergy * 0.92f) + (bassEnergy * 0.08f);
     longBassEnergy = (longBassEnergy * 0.99f) + (bassEnergy * 0.01f);
-
     float bassTrend = (longBassEnergy > 2.0f) ? (shortBassEnergy / longBassEnergy) : 1.0f;
 
-    // Minimum phrase dwell time: 4000ms
-    if (now - lastPhraseChangeMs >= 4000) {
-      MusicPhrase prevPhrase = phraseState;
+    uint32_t phraseDur = (durationBetweenPhrases > 0) ? durationBetweenPhrases : 8000;
+    uint32_t barDur = (durationBetweenBars > 0) ? durationBetweenBars : 2000;
 
-      if (bassTrend < 0.45f || (bassRatio < 0.15f && currentLevel > noiseFloor + 2.0f)) {
-        phraseState = MusicPhrase::BREAKDOWN;
-      } else if (prevPhrase == MusicPhrase::BREAKDOWN && bassTrend > 1.5f) {
-        phraseState = MusicPhrase::DROP;
-      } else if (bassTrend > 1.25f) {
-        phraseState = MusicPhrase::BUILDUP;
+    bool dropInLastPhrase = (now - lastDropTimestamp <= phraseDur);
+    bool beatInLastPhrase = (now - lastBeatTimestamp <= phraseDur);
+    bool beatInLastBar = (now - lastBeatTimestamp <= barDur);
+    bool constantBeats = (beatsPerMinute > 0) && (now - lastBpmUpdateTime <= 2 * barDur);
+    uint32_t barsWithoutBeats = (durationBetweenBars > 0) ? (durationSinceLastBeat / durationBetweenBars) : (durationSinceLastBeat / 2000);
+    uint32_t barsSinceEnergyUpdate = (barDur > 0) ? ((now - lastEnergyUpdateTime) / barDur) : 0;
+
+    SoundEnergy updatedEnergy = soundEnergy;
+
+    if (dropInLastPhrase && (beatInLastPhrase || beatDetected)) {
+      updatedEnergy = SoundEnergy::CHORUS;
+    } else if (barsWithoutBeats <= 2 && (constantBeats || beatInLastBar || bassRatio > 0.25f)) {
+      if (soundEnergy == SoundEnergy::CHORUS && (now - lastDropTimestamp < phraseDur / 2)) {
+        updatedEnergy = SoundEnergy::CHORUS;
       } else {
-        phraseState = MusicPhrase::STEADY;
+        updatedEnergy = SoundEnergy::VERSE;
       }
-
-      if (phraseState != prevPhrase) {
-        lastPhraseChangeMs = now;
+    } else {
+      if (soundEnergy == SoundEnergy::CHORUS || soundEnergy == SoundEnergy::BREAKDOWN || bassTrend < 0.50f || (bassRatio < 0.15f && currentLevel > noiseFloor + 2.0f)) {
+        updatedEnergy = SoundEnergy::BREAKDOWN;
+      } else if (bassTrend > 1.25f || (now - lastDropTimestamp > phraseDur && barsWithoutBeats <= 4)) {
+        updatedEnergy = SoundEnergy::BUILDUP;
+      } else {
+        updatedEnergy = SoundEnergy::INTRO;
       }
     }
+
+    if (now - lastEnergyUpdateTime >= 1000) {
+      if (updatedEnergy > soundEnergy) {
+        if (soundEnergy == SoundEnergy::INTRO) {
+          if (dropInLastPhrase) soundEnergy = SoundEnergy::CHORUS;
+          else if (barsSinceEnergyUpdate >= 2) soundEnergy = SoundEnergy::VERSE;
+        } else if (soundEnergy == SoundEnergy::VERSE) {
+          if (dropInLastPhrase) soundEnergy = SoundEnergy::CHORUS;
+          else if (bassTrend > 1.25f) soundEnergy = SoundEnergy::BUILDUP;
+        } else if (soundEnergy == SoundEnergy::BUILDUP) {
+          if (dropInLastPhrase || (bassTrend > 1.4f && (beatInLastBar || beatDetected))) {
+            soundEnergy = SoundEnergy::CHORUS;
+          }
+        } else {
+          soundEnergy = updatedEnergy;
+        }
+        lastEnergyUpdateTime = now;
+      } else if (updatedEnergy < soundEnergy) {
+        if (soundEnergy == SoundEnergy::CHORUS) {
+          if (beatInLastBar) soundEnergy = SoundEnergy::VERSE;
+          else soundEnergy = SoundEnergy::BREAKDOWN;
+          lastEnergyUpdateTime = now;
+        } else if (soundEnergy == SoundEnergy::VERSE) {
+          if (bassTrend < 0.50f || barsWithoutBeats >= 2) {
+            soundEnergy = SoundEnergy::BREAKDOWN;
+            lastEnergyUpdateTime = now;
+          }
+        } else if (soundEnergy == SoundEnergy::BUILDUP) {
+          if (barsSinceEnergyUpdate >= 4) {
+            soundEnergy = SoundEnergy::BREAKDOWN;
+            lastEnergyUpdateTime = now;
+          }
+        } else if (soundEnergy == SoundEnergy::BREAKDOWN) {
+          if (barsSinceEnergyUpdate >= 4) {
+            soundEnergy = SoundEnergy::INTRO;
+            lastEnergyUpdateTime = now;
+          }
+        } else {
+          soundEnergy = updatedEnergy;
+          lastEnergyUpdateTime = now;
+        }
+      }
+    }
+
+    switch (soundEnergy) {
+      case SoundEnergy::CHORUS:    phraseState = MusicPhrase::DROP; break;
+      case SoundEnergy::BUILDUP:   phraseState = MusicPhrase::BUILDUP; break;
+      case SoundEnergy::BREAKDOWN: phraseState = MusicPhrase::BREAKDOWN; break;
+      case SoundEnergy::INTRO:     phraseState = MusicPhrase::INTRO; break;
+      case SoundEnergy::VERSE:     phraseState = MusicPhrase::VERSE; break;
+      default:                     phraseState = MusicPhrase::VERSE; break;
+    }
   } else {
-    phraseState = MusicPhrase::STEADY;
+    phraseState = MusicPhrase::VERSE;
   }
 }

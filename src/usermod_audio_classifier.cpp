@@ -115,9 +115,14 @@ void AudioClassifierUsermod::addToJsonInfo(JsonObject& root) {
   String levelStr = String(classifier.getAverageLevelPercent(), 1) + "% avg / " + String(classifier.getPeakLevelPercent(), 1) + "% peak (" + classifier.getSemanticStateStr() + ")";
   infoArr.add(levelStr);
 
-  // Row 2: Phrase State (if experimental enabled)
+  // Row 2: Phrase State, Energy & BPM (if experimental enabled)
   if (experimentalEnabled) {
-    infoArr.add("Phrase: " + String(classifier.getPhraseStateStr()));
+    String phraseStr = "Phrase: " + String(classifier.getPhraseStateStr()) + " (Energy: " + String(classifier.getSoundEnergy()) + "%";
+    if (classifier.getBPM() > 0) {
+      phraseStr += ", " + String(classifier.getBPM()) + " BPM";
+    }
+    phraseStr += ")";
+    infoArr.add(phraseStr);
   }
 
   // Row 3: Status / Warnings

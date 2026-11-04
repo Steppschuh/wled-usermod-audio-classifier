@@ -35,12 +35,14 @@ When MQTT is connected, the following entities appear automatically under your W
 
 | Entity Name | Domain | Type | Values / Unit | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| **`Sound Level`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second RMS average sound volume (updated at 1 Hz). |
-| **`Sound Peak`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second maximum sound peak (updated at 1 Hz). |
-| **`Sound Detected`** | `binary_sensor` | `sound` | `ON` / `OFF` | Debounced presence indicator for active sound in the room. |
+| **`Audio Level`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second RMS average sound volume (updated at 1 Hz). |
+| **`Audio Peak`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second maximum sound peak (updated at 1 Hz). |
+| **`Audio Detected`** | `binary_sensor` | `sound` | `ON` / `OFF` | Debounced presence indicator for active sound in the room. |
 | **`Audio State`** | `sensor` | `enum` | `silence`, `ambient_noise`, `music` | Contextual room acoustic state. |
+| **`Audio Energy`** | `sensor` | Measurement | `0` – `100 %` | Dynamic track & acoustic energy level (0%: silence, 10%: noise, 40%: breakdown, 50%: buildup, 60%: intro, 80%: verse, 100%: chorus/drop). |
+| **`Audio BPM`** | `sensor` | Measurement | `60` – `240 bpm` | Detected musical tempo / rhythm speed (when `experimental-music` is enabled). |
+| **`Audio Phrase`** | `sensor` | Diagnostic | `intro`, `verse`, `buildup`, `breakdown`, `drop` | Musical phrasing and EDM structure state (when `experimental-music` is enabled). |
 | **`Audio Source Status`** | `sensor` | Diagnostic | Text | Live coupling health with AudioReactive and microphone stream. |
-| **`Music Phrase`** | `sensor` | Diagnostic | `steady`, `buildup`, `breakdown`, `drop` | Musical phrasing state (when `experimental-music` is enabled). |
 
 ---
 
@@ -96,7 +98,7 @@ Configure under **Config > Usermods > AudioClassifier**:
 | **`On Delay`** | `1200 ms` | Continuous sound duration required before triggering presence. |
 | **`Off Delay`** | `8000 ms` | Continuous silence duration required before clearing presence. |
 | **`Music Hold`** | `20000 ms` | Hold time in music state during quiet bridges/breakdowns. |
-| **`Experimental Music`** | `false` | Enable beat regularity and musical phrasing tracking (`steady`, `buildup`, `breakdown`, `drop`). |
+| **`Experimental Music`** | `false` | Enable beat regularity and musical phrasing tracking (`intro`, `verse`, `buildup`, `breakdown`, `drop`). |
 | **`Stream Raw`** | `false` | Stream raw audio frames over MQTT (`wled/<device>/audio/raw`) for analysis. |
 
 ### 2. AudioReactive Settings
@@ -167,10 +169,12 @@ Topics derive from WLED's configured MQTT Device Topic (`wled/<mac>`):
 | :--- | :--- | :--- | :--- |
 | `<device>/audio/level` | Float (`24.5`) | 1 Hz + Heartbeat | 1-second RMS average sound percentage |
 | `<device>/audio/peak` | Float (`45.2`) | 1 Hz + Heartbeat | 1-second maximum sound peak percentage |
-| `<device>/audio/sound` | `ON` / `OFF` | On change + Heartbeat | Debounced sound presence |
+| `<device>/audio/detected` | `ON` / `OFF` | On change + Heartbeat | Debounced sound presence (also mirrored to `audio/sound`) |
 | `<device>/audio/state` | String (`silence`, `ambient_noise`, `music`) | On change + Heartbeat | Semantic acoustic state |
+| `<device>/audio/energy` | Integer (`0` – `100 %`) | 1 Hz + On change + Heartbeat | Track acoustic energy percentage |
+| `<device>/audio/bpm` | Integer (`128`) | 1 Hz + On change + Heartbeat | Detected rhythm speed (BPM) |
+| `<device>/audio/phrase` | String (`intro`, `verse`, `buildup`, `breakdown`, `drop`) | On change + Heartbeat | Phrasing state (if enabled) |
 | `<device>/audio/status` | String (diagnostic message) | On change + Heartbeat | AudioReactive coupling state |
-| `<device>/audio/phrase` | String (`steady`, `buildup`, `breakdown`, `drop`) | On change + Heartbeat | Phrasing state (if enabled) |
 
 - **Availability**: Tracked automatically via `<device>/status` (`online` / `offline`).
 - **Clean Unenrollment**: Turning off `mqtt-auto-discovery` publishes empty retained messages to automatically remove entities from Home Assistant.
