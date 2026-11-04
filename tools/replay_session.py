@@ -312,7 +312,7 @@ class SimulatedAudioClassifier:
         self.loudness_buffer.calculate()
         self.bass_buffer.add(bass_percent)
         self.bass_buffer.calculate()
-        low_freq_val = (float(b0) * 1.3 + float(b1) * 0.7) / 2.0
+        low_freq_val = max(float(b0), float(b1))
         self.low_freq_buffer.add(low_freq_val)
         self.low_freq_buffer.calculate()
         self.spread_buffer.add(spread)
@@ -351,12 +351,22 @@ class SimulatedAudioClassifier:
         b3 = bands[3] if num_bands > 3 else 0
         b4 = bands[4] if num_bands > 4 else 0
 
-        has_bass = (b0 >= 50 or (b0 >= 38 and (b0 + b1) >= 85)) and (bass_ratio >= 0.28)
-        is_mid_heavy = ((b2 + b3 + b4) > (b0 + b1) * 1.50)
-        is_quiet_section = (eff_raw_vol < 50.0)
+        # Middleground bass onset requirement:
+        # Accept punchy sub-bass (b0 >= 35) OR punchy mid-bass (b1 >= 40) OR combined bass (b0 + b1 >= 60)
+        has_bass = (b0 >= 35 or b1 >= 40 or (b0 + b1) >= 60) and (
+            bass_ratio >= 0.22 or (bass_flux >= 20.0 and bass_ratio >= 0.18)
+        )
 
-        if not has_bass or is_quiet_section or is_mid_heavy:
+        mid_avg = float(b2 + b3 + b4) / 3.0
+        bass_avg = float(b0 + b1) / 2.0
+        is_mid_overpowering = (mid_avg > bass_avg * 2.2)
+
+        if not has_bass:
             beat_feature = 0.0
+        elif is_mid_overpowering:
+            beat_feature *= 0.25
+        elif eff_raw_vol < 25.0:
+            beat_feature *= 0.30
         elif spread > bass_percent * 1.2 and bass_ratio < 0.35:
             beat_feature *= 0.20
         elif pk and (hz <= 140.0 or hz == 0.0):
@@ -392,18 +402,17 @@ class SimulatedAudioClassifier:
             self.expected_beat_prob = 0.0
             self.missed_beats = 0
 
-        BEAT_THRESH_MAX = 42.0
-        BEAT_THRESH_DEF = 20.0
+        BEAT_THRESH_MAX = 40.0
+        BEAT_THRESH_DEF = 18.0
         BEAT_THRESH_MIN = 12.0
         MIN_BEAT_DELAY = 280
 
         beat_thresh = BEAT_THRESH_MAX
-        beat_prob_active = (self.beat_feature_buffer.rms > 2.0)
         is_offbeat = (self.duration_between_beats > 0 and duration_since_last_beat < int(self.duration_between_beats * 0.72))
         enough_delay = (duration_since_last_beat >= MIN_BEAT_DELAY and not is_offbeat)
 
-        if beat_prob_active and enough_delay:
-            recency = float(duration_since_last_beat - MIN_BEAT_DELAY) / 100.0 if duration_since_last_beat > MIN_BEAT_DELAY else 0.0
+        if enough_delay:
+            recency = float(duration_since_last_beat - MIN_BEAT_DELAY) / 120.0 if duration_since_last_beat > MIN_BEAT_DELAY else 0.0
             if recency > 1.0:
                 recency = 1.0
             beat_thresh -= (BEAT_THRESH_MAX - BEAT_THRESH_DEF) * recency
@@ -413,9 +422,10 @@ class SimulatedAudioClassifier:
             if beat_thresh < BEAT_THRESH_MIN:
                 beat_thresh = BEAT_THRESH_MIN
 
-        # Low-frequency variance
+        # Low-frequency variance check: reject static drones/pads while accepting real kicks
+        span = self.low_freq_buffer.max_val - self.low_freq_buffer.min_val
         has_low_freq_variance = (self.low_freq_buffer.count < 8) or (
-            self.low_freq_buffer.std_dev >= 6.0 and (self.low_freq_buffer.max_val - self.low_freq_buffer.min_val) >= 25.0
+            (self.low_freq_buffer.std_dev >= 3.0 and span >= 12.0) or (self.low_freq_buffer.std_dev >= 4.5)
         )
 
         beat_detected = has_bass and has_low_freq_variance and (beat_feature > beat_thresh and enough_delay)
@@ -837,17 +847,17 @@ class SimulatedAudioClassifier:
             span = self.low_freq_buffer.max_val - self.low_freq_buffer.min_val
             m = self.low_freq_buffer.mean
             std_dev = self.low_freq_buffer.std_dev
-            has_bass_energy = (b0 >= 35 or b1 >= 35 or m >= 25.0 or span >= 40.0)
+            has_bass_energy = (b0 >= 28 or b1 >= 32 or m >= 18.0 or span >= 20.0)
             dt_beat = (now - self.last_beat_timestamp) if self.last_beat_timestamp > 0 else 99999
 
-            if not has_bass_energy or std_dev < 6.0 or span < 20.0 or dt_beat > 2200:
-                self.beat_probability *= 0.70
+            if not has_bass_energy or std_dev < 2.5 or span < 10.0 or dt_beat > 2500:
+                self.beat_probability *= 0.75
                 if self.beat_probability < 0.02:
                     self.beat_probability = 0.0
             else:
-                var_factor = max(0.0, min(1.0, (std_dev - 6.0) / 8.0))
-                span_factor = max(0.0, min(1.0, (span - 25.0) / 30.0))
-                level_factor = max(0.0, min(1.0, (m - 15.0) / 35.0))
+                var_factor = max(0.0, min(1.0, (std_dev - 2.5) / 5.0))
+                span_factor = max(0.0, min(1.0, (span - 12.0) / 25.0))
+                level_factor = max(0.0, min(1.0, (m - 12.0) / 28.0))
 
                 recency = 0.0
                 if dt_beat <= 1200:
@@ -855,17 +865,23 @@ class SimulatedAudioClassifier:
                 elif dt_beat <= 2200:
                     recency = 1.0 - (float(dt_beat - 1200) / 1000.0)
 
-                target_prob = var_factor * (span_factor * 0.40 + level_factor * 0.30 + recency * 0.30)
-                if var_factor > 0.4 and span_factor > 0.4:
-                    boost = 0.70 + 0.30 * var_factor
-                    if boost > target_prob:
-                        target_prob = boost
+                target_prob = var_factor * (span_factor * 0.40 + level_factor * 0.25 + recency * 0.35)
+                recent_beats = sum(1 for bt in self.beat_times if bt > 0 and (now - bt) <= 3000)
+                if recent_beats == 0:
+                    target_prob = 0.0
+                elif recent_beats == 1:
+                    target_prob = min(target_prob, 0.15)
+                else:
+                    if var_factor > 0.35 and span_factor > 0.35 and recency > 0.5:
+                        boost = 0.70 + 0.30 * var_factor
+                        if boost > target_prob:
+                            target_prob = boost
                 target_prob = max(0.0, min(1.0, target_prob))
 
                 if target_prob < self.beat_probability:
-                    self.beat_probability = (self.beat_probability * 0.70) + (target_prob * 0.30)
+                    self.beat_probability = (self.beat_probability * 0.75) + (target_prob * 0.25)
                 else:
-                    self.beat_probability = (self.beat_probability * 0.88) + (target_prob * 0.12)
+                    self.beat_probability = (self.beat_probability * 0.85) + (target_prob * 0.15)
                 if self.beat_probability < 0.02:
                     self.beat_probability = 0.0
 

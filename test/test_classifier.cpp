@@ -616,6 +616,84 @@ void test_outlier_missing_beat_in_phrase_reverts(void) {
   TEST_ASSERT_EQUAL_UINT8(100, classifier.getSoundEnergy());
 }
 
+void test_moderate_volume_with_band1_kick_and_vocal_mids_detected(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  AudioClassifier classifier(cfg);
+  AudioFrame frame;
+
+  // 5 seconds of 120 BPM kicks, moderate volume (lvl 30%, raw 45), kick in band 1 (b0=25, b1=75), vocals in mids
+  for (uint32_t t = 0; t <= 5000; t += 20) {
+    frame.timestampMs = t;
+    bool isKick = (t % 500) < 40;
+    frame.levelPercent = isKick ? 30.0f : 20.0f;
+    frame.rawVolume = isKick ? 45.0f : 35.0f;
+    frame.smoothedVolume = 40.0f;
+    frame.isPeak = isKick;
+    frame.majorPeakHz = 80.0f;
+    frame.peakMagnitude = 100.0f;
+
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 0;
+    if (isKick) {
+      frame.bands[0] = 25;
+      frame.bands[1] = 75;
+      frame.bands[2] = 40;
+      frame.bands[3] = 45;
+      frame.bands[4] = 40;
+    } else {
+      frame.bands[0] = 10;
+      frame.bands[1] = 20;
+      frame.bands[2] = 35;
+      frame.bands[3] = 40;
+      frame.bands[4] = 35;
+    }
+    classifier.processFrame(frame);
+  }
+
+  // Must not have false negatives: beats must be detected, BPM locked, beat probability high
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
+  TEST_ASSERT_TRUE_MESSAGE(classifier.getBeatProbability() >= 0.70f, "Beat probability should be high during active groove");
+  TEST_ASSERT_INT_WITHIN_MESSAGE(10, 120, classifier.getBPM(), "BPM should lock onto 120 BPM groove");
+}
+
+void test_isolated_single_bass_hit_does_not_yield_high_beat_probability(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  AudioClassifier classifier(cfg);
+  AudioFrame frame;
+
+  // 1. Initial 2 seconds of silence
+  for (uint32_t t = 0; t < 2000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 2.0f;
+    frame.rawVolume = 5.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 0;
+    classifier.processFrame(frame);
+  }
+
+  // 2. One single isolated bass boom (sound effect or door slam)
+  frame.timestampMs = 2000;
+  frame.levelPercent = 35.0f;
+  frame.rawVolume = 70.0f;
+  frame.isPeak = true;
+  frame.bands[0] = 60;
+  frame.bands[1] = 80;
+  classifier.processFrame(frame);
+
+  // 3. Followed by 1500ms of quiet audio
+  for (uint32_t t = 2020; t <= 3500; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 2.0f;
+    frame.rawVolume = 5.0f;
+    frame.isPeak = false;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 0;
+    classifier.processFrame(frame);
+  }
+
+  // 1 isolated hit cannot establish a groove -> beat probability must be low (<= 0.20)
+  TEST_ASSERT_TRUE_MESSAGE(classifier.getBeatProbability() <= 0.20f, "Single isolated bass hit must not yield high beat probability");
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_initial_state_is_quiet_and_silence);
@@ -635,5 +713,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_recorded_session_beat_probability);
   RUN_TEST(test_outlier_soft_bass_hit_before_drop_reverts);
   RUN_TEST(test_outlier_missing_beat_in_phrase_reverts);
+  RUN_TEST(test_moderate_volume_with_band1_kick_and_vocal_mids_detected);
+  RUN_TEST(test_isolated_single_bass_hit_does_not_yield_high_beat_probability);
   return UNITY_END();
 }

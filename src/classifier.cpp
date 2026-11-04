@@ -292,7 +292,10 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
 
   // Positive Bass Spectral Flux (kick drum transient onset)
   float rawBass = (float)frame.bands[0] * 1.3f + (float)frame.bands[1] * 0.7f;
-  float bassFlux = (rawBass > prevBassEnergy) ? (rawBass - prevBassEnergy) : 0.0f;
+  float bassFlux = 0.0f;
+  if (prevBassEnergy > 0.0f && rawBass > prevBassEnergy) {
+    bassFlux = rawBass - prevBassEnergy;
+  }
   prevBassEnergy = rawBass;
 
   // 2. Feed 1.5s Rolling Feature Buffers (Rave-Totem architecture)
@@ -300,7 +303,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   loudnessBuffer.calculate();
   bassBuffer.add(bassPercent);
   bassBuffer.calculate();
-  float lowFreqVal = ((float)frame.bands[0] * 1.3f + (float)frame.bands[1] * 0.7f) / 2.0f;
+  float lowFreqVal = fmaxf((float)frame.bands[0], (float)frame.bands[1]);
   lowFreqBuffer.add(lowFreqVal);
   lowFreqBuffer.calculate();
   spreadBuffer.add(spread);
@@ -336,16 +339,22 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   // Snare/hi-hat suppression: if volume is low or bass is absent, reject non-beat transients
   float effRawVol = fmaxf(frame.rawVolume, fmaxf(frame.smoothedVolume, frame.levelPercent * 2.55f));
   
-  // Real kick drum requires true sub-bass (< 60Hz, band 0) and high bass ratio
-  bool hasBass = (frame.bands[0] >= 50 || (frame.bands[0] >= 38 && (frame.bands[0] + frame.bands[1]) >= 85)) && 
-                 (bassRatio >= 0.28f);
+  // Middleground bass onset requirement:
+  // Accept punchy sub-bass (band 0 >= 35) OR punchy mid-bass (band 1 >= 40) OR combined bass (band 0 + band 1 >= 60)
+  bool hasBass = (frame.bands[0] >= 35 || frame.bands[1] >= 40 || (frame.bands[0] + frame.bands[1]) >= 60) && 
+                 (bassRatio >= 0.22f || (bassFlux >= 20.0f && bassRatio >= 0.18f));
 
-  // Snare/clap/vocal rejection: if mid bands are much stronger than bass, reject
-  bool isMidHeavy = ((frame.bands[2] + frame.bands[3] + frame.bands[4]) > (frame.bands[0] + frame.bands[1]) * 1.50f);
-  bool isQuietSection = (effRawVol < 50.0f);
+  // Mid-heavy check: compare average mid band against average bass band
+  float midAvg = (float)(frame.bands[2] + frame.bands[3] + frame.bands[4]) / 3.0f;
+  float bassAvg = (float)(frame.bands[0] + frame.bands[1]) / 2.0f;
+  bool isMidOverpowering = (midAvg > bassAvg * 2.2f);
 
-  if (!hasBass || isQuietSection || isMidHeavy) {
+  if (!hasBass) {
     beatFeature = 0.0f;
+  } else if (isMidOverpowering) {
+    beatFeature *= 0.25f;
+  } else if (effRawVol < 25.0f) {
+    beatFeature *= 0.30f;
   } else if (spread > bassPercent * 1.2f && bassRatio < 0.35f) {
     beatFeature *= 0.20f;
   } else if (frame.isPeak && (frame.majorPeakHz <= 140.0f || frame.majorPeakHz == 0.0f)) {
@@ -386,19 +395,18 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     missedBeats = 0;
   }
 
-  const float BEAT_THRESH_MAX = 42.0f;
-  const float BEAT_THRESH_DEF = 20.0f;
+  const float BEAT_THRESH_MAX = 40.0f;
+  const float BEAT_THRESH_DEF = 18.0f;
   const float BEAT_THRESH_MIN = 12.0f;
   const uint32_t MIN_BEAT_DELAY = 280;
 
   float beatThresh = BEAT_THRESH_MAX;
-  bool beatProbActive = (beatFeatureBuffer.rms > 2.0f);
   bool isOffbeat = (durationBetweenBeats > 0 && durationSinceLastBeat < (uint32_t)(durationBetweenBeats * 0.72f));
   bool enoughDelay = (durationSinceLastBeat >= MIN_BEAT_DELAY && !isOffbeat);
 
-  if (beatProbActive && enoughDelay) {
+  if (enoughDelay) {
     float recency = (durationSinceLastBeat > MIN_BEAT_DELAY)
-                    ? ((float)(durationSinceLastBeat - MIN_BEAT_DELAY) / 100.0f)
+                    ? ((float)(durationSinceLastBeat - MIN_BEAT_DELAY) / 120.0f)
                     : 0.0f;
     if (recency > 1.0f) recency = 1.0f;
     beatThresh -= (BEAT_THRESH_MAX - BEAT_THRESH_DEF) * recency;
@@ -408,8 +416,9 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   }
 
   // Require low-frequency variance in buffer to avoid false beats in static pad/drone sections
+  float lowSpan = lowFreqBuffer.maxVal - lowFreqBuffer.minVal;
   bool hasLowFreqVariance = (lowFreqBuffer.count < 8) || 
-                            (lowFreqBuffer.stdDev >= 6.0f && (lowFreqBuffer.maxVal - lowFreqBuffer.minVal) >= 25.0f);
+                            ((lowFreqBuffer.stdDev >= 3.0f && lowSpan >= 12.0f) || (lowFreqBuffer.stdDev >= 4.5f));
 
   bool beatDetected = hasBass && hasLowFreqVariance && (beatFeature > beatThresh && enoughDelay);
 
@@ -902,22 +911,22 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     float span = lowFreqBuffer.maxVal - lowFreqBuffer.minVal;
     float m = lowFreqBuffer.mean;
     float stdDev = lowFreqBuffer.stdDev;
-    bool hasBassEnergy = (frame.bands[0] >= 35 || frame.bands[1] >= 35 || m >= 25.0f || span >= 40.0f);
+    bool hasBassEnergy = (frame.bands[0] >= 28 || frame.bands[1] >= 32 || m >= 18.0f || span >= 20.0f);
     uint32_t dtBeat = (lastBeatTimestamp > 0) ? (now - lastBeatTimestamp) : 99999;
 
-    if (!hasBassEnergy || stdDev < 6.0f || span < 20.0f || dtBeat > 2200) {
-      beatProbability *= 0.70f;
+    if (!hasBassEnergy || stdDev < 2.5f || span < 10.0f || dtBeat > 2500) {
+      beatProbability *= 0.75f;
       if (beatProbability < 0.02f) beatProbability = 0.0f;
     } else {
-      float varFactor = (stdDev - 6.0f) / 8.0f;
+      float varFactor = (stdDev - 2.5f) / 5.0f;
       if (varFactor < 0.0f) varFactor = 0.0f;
       if (varFactor > 1.0f) varFactor = 1.0f;
 
-      float spanFactor = (span - 25.0f) / 30.0f;
+      float spanFactor = (span - 12.0f) / 25.0f;
       if (spanFactor < 0.0f) spanFactor = 0.0f;
       if (spanFactor > 1.0f) spanFactor = 1.0f;
 
-      float levelFactor = (m - 15.0f) / 35.0f;
+      float levelFactor = (m - 12.0f) / 28.0f;
       if (levelFactor < 0.0f) levelFactor = 0.0f;
       if (levelFactor > 1.0f) levelFactor = 1.0f;
 
@@ -928,18 +937,33 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
         recency = 1.0f - ((float)(dtBeat - 1200) / 1000.0f);
       }
 
-      float targetProb = varFactor * (spanFactor * 0.40f + levelFactor * 0.30f + recency * 0.30f);
-      if (varFactor > 0.4f && spanFactor > 0.4f) {
-        float boost = 0.70f + 0.30f * varFactor;
-        if (boost > targetProb) targetProb = boost;
+      float targetProb = varFactor * (spanFactor * 0.40f + levelFactor * 0.25f + recency * 0.35f);
+
+      // Require at least 2 beats within 3 seconds to establish a true rhythmic groove
+      uint8_t recentBeatsCount = 0;
+      for (size_t i = 0; i < MAX_BEATS; i++) {
+        if (beatTimes[i] > 0 && (now - beatTimes[i]) <= 3000) {
+          recentBeatsCount++;
+        }
+      }
+
+      if (recentBeatsCount == 0) {
+        targetProb = 0.0f;
+      } else if (recentBeatsCount == 1) {
+        if (targetProb > 0.15f) targetProb = 0.15f;
+      } else {
+        if (varFactor > 0.35f && spanFactor > 0.35f && recency > 0.5f) {
+          float boost = 0.70f + 0.30f * varFactor;
+          if (boost > targetProb) targetProb = boost;
+        }
       }
       if (targetProb < 0.0f) targetProb = 0.0f;
       if (targetProb > 1.0f) targetProb = 1.0f;
 
       if (targetProb < beatProbability) {
-        beatProbability = (beatProbability * 0.70f) + (targetProb * 0.30f);
+        beatProbability = (beatProbability * 0.75f) + (targetProb * 0.25f);
       } else {
-        beatProbability = (beatProbability * 0.88f) + (targetProb * 0.12f);
+        beatProbability = (beatProbability * 0.85f) + (targetProb * 0.15f);
       }
       if (beatProbability < 0.02f) beatProbability = 0.0f;
     }
