@@ -16,3 +16,6 @@ build_output/
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Audio recordings (binary audio captures)
+test/fixtures/*.wav
