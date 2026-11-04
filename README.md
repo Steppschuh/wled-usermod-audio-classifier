@@ -33,17 +33,17 @@ PIR motion sensors miss people sitting still, and mmWave radars cannot tell if a
 
 When MQTT is connected, the following entities appear automatically under your WLED device in Home Assistant:
 
-| Entity Name | Domain | Type | Values / Unit | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| **`Audio Level RMS`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second RMS average sound volume (updated at 1 Hz). |
-| **`Audio Level Peak`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second maximum sound peak (updated at 1 Hz). |
-| **`Audio Detected`** | `binary_sensor` | `sound` | `ON` / `OFF` | Debounced presence indicator for active sound in the room. |
-| **`Audio Type`** | `sensor` | `enum` | `silence`, `ambient_noise`, `music` | Contextual room acoustic state. |
-| **`Music Energy`** | `sensor` | Measurement | `0` – `100 %` | Dynamic track & acoustic energy level (0%: silence, 10%: noise, 30%: outro, 40%: breakdown, 50%: buildup, 60%: intro, 80%: verse, 100%: chorus). |
-| **`BPM`** | `sensor` | Measurement | `60` – `240 bpm` | Detected musical tempo / rhythm speed (when `experimental-music` is enabled). |
-| **`Music Beat Probability`** | `sensor` | Measurement | `0.00` – `1.00` | Real-time beat presence probability based on low-frequency variance (0.00 = silence/noise/ambient, 1.00 = active bass/beat). |
-| **`Music Phrase`** | `sensor` | `enum` | `intro`, `verse`, `buildup`, `chorus`, `breakdown`, `outro` | Musical phrasing and song structure state (when `experimental-music` is enabled). |
-| **`Audio Source Status`** | `sensor` | Diagnostic | Text | Live coupling health with AudioReactive and microphone stream. |
+| Entity Name | Domain | Type | Values / Unit | Icon | Description |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`Audio Level RMS`** | `sensor` | Measurement | `0.0` – `100.0 %` | `mdi:volume-medium` | 1-second RMS average sound volume (updated at 1 Hz). |
+| **`Audio Level Peak`** | `sensor` | Measurement | `0.0` – `100.0 %` | `mdi:volume-maximum` | 1-second maximum sound peak (updated at 1 Hz). |
+| **`Audio Detected`** | `binary_sensor` | `sound` | `ON` / `OFF` | `mdi:ear-hearing` | Debounced presence indicator for active sound in the room. |
+| **`Audio Type`** | `sensor` | `enum` | `silence`, `ambient_noise`, `music` | `mdi:waveform` | Contextual room acoustic state. |
+| **`Audio Source Status`** | `sensor` | Diagnostic | Text | `mdi:microphone-outline` | Live coupling health with AudioReactive and microphone stream. |
+| **`Music Phrase`** | `sensor` | `enum` | `intro`, `verse`, `buildup`, `chorus`, `breakdown`, `outro` | `mdi:playlist-music` | Musical phrasing and song structure state (when `experimental-music` is enabled). |
+| **`Music Energy`** | `sensor` | Measurement | `0` – `100 %` | `mdi:lightning-bolt` | Dynamic track & acoustic energy level (0%: silence, 10%: noise, 30%: outro, 40%: breakdown, 50%: buildup, 60%: intro, 80%: verse, 100%: chorus). |
+| **`BPM`** | `sensor` | Measurement | `60` – `240 bpm` | `mdi:metronome` | Detected musical tempo / rhythm speed during active beat sections (`verse` / `chorus`). |
+| **`Music Beat Probability`** | `sensor` | Measurement | `0.0` – `100.0 %` | `mdi:drum` | Real-time beat presence probability based on low-frequency variance (0% = silence/noise/ambient, 100% = active bass/beat). |
 
 ---
 

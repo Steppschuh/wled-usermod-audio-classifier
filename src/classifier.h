@@ -136,8 +136,13 @@ public:
   MusicPhrase getPhraseState() const { return phraseState; }
   const char* getPhraseStateStr() const;
   float getMusicConfidence() const { return musicConfidence; }
-  uint16_t getBPM() const { return beatsPerMinute; }
+  uint16_t getBPM() const {
+    if (phraseState != MusicPhrase::VERSE && phraseState != MusicPhrase::CHORUS) return 0;
+    if (beatProbability <= 0.01f) return 0;
+    return beatsPerMinute;
+  }
   float getBeatProbability() const { return beatProbability; }
+  float getBeatProbabilityPercent() const { return beatProbability * 100.0f; }
   uint8_t getSoundEnergy() const { return (uint8_t)soundEnergy; }
   const char* getSoundEnergyStr() const;
   SoundEnergy getSoundEnergyState() const { return soundEnergy; }

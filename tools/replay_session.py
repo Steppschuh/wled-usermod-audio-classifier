@@ -189,46 +189,53 @@ class SimulatedAudioClassifier:
             if len(self.beat_times) > 16:
                 self.beat_times.pop(0)
 
-            if self.last_beat_timestamp > 0 and dt <= 2000:
-                num_beats = max(1, round(dt / self.duration_between_beats)) if self.duration_between_beats > 0 else 1
-                norm_intv = dt / num_beats
-                if 250 <= norm_intv <= 750:
-                    self.beat_delay_buffer.append(norm_intv)
-                    if len(self.beat_delay_buffer) > 8:
-                        self.beat_delay_buffer.pop(0)
-                    if len(self.beat_delay_buffer) >= 4:
-                        avg_intv = sum(self.beat_delay_buffer) / len(self.beat_delay_buffer)
-                        cand = 60000.0 / avg_intv
-                        while cand > 175.0: cand *= 0.5
-                        while cand < 85.0: cand *= 2.0
+            in_beat_phrase = self.phrase_state in ("verse", "chorus")
+            if in_beat_phrase and (self.beat_probability > 0.01 or len(self.beat_times) >= 1):
+                if self.last_beat_timestamp > 0 and dt <= 2000:
+                    num_beats = max(1, round(dt / self.duration_between_beats)) if self.duration_between_beats > 0 else 1
+                    norm_intv = dt / num_beats
+                    if 250 <= norm_intv <= 750:
+                        self.beat_delay_buffer.append(norm_intv)
+                        if len(self.beat_delay_buffer) > 8:
+                            self.beat_delay_buffer.pop(0)
+                        if len(self.beat_delay_buffer) >= 4:
+                            avg_intv = sum(self.beat_delay_buffer) / len(self.beat_delay_buffer)
+                            cand = 60000.0 / avg_intv
+                            while cand > 175.0: cand *= 0.5
+                            while cand < 85.0: cand *= 2.0
 
-                        if self.raw_bpm <= 0.0 or self.bpm == 0:
-                            self.raw_bpm = cand
-                            self.bpm_lock_count = 1
-                        else:
-                            cand2 = cand * 2.0
-                            cand_half = cand * 0.5
-                            diffs = [(abs(cand - self.raw_bpm), cand),
-                                     (abs(cand2 - self.raw_bpm), cand2),
-                                     (abs(cand_half - self.raw_bpm), cand_half)]
-                            diffs.sort()
-                            min_diff, best_cand = diffs[0]
-                            max_diff = max(10.0, self.raw_bpm * 0.12)
-                            if min_diff <= max_diff:
-                                alpha = 0.35 if self.bpm_lock_count < 8 else 0.10
-                                self.raw_bpm = (self.raw_bpm * (1.0 - alpha)) + (best_cand * alpha)
-                                self.bpm_lock_count = min(30, self.bpm_lock_count + 1)
+                            if self.raw_bpm <= 0.0 or self.bpm == 0:
+                                self.raw_bpm = cand
+                                self.bpm_lock_count = 1
                             else:
-                                if self.bpm_lock_count > 2:
-                                    self.bpm_lock_count -= 2
+                                cand2 = cand * 2.0
+                                cand_half = cand * 0.5
+                                diffs = [(abs(cand - self.raw_bpm), cand),
+                                         (abs(cand2 - self.raw_bpm), cand2),
+                                         (abs(cand_half - self.raw_bpm), cand_half)]
+                                diffs.sort()
+                                min_diff, best_cand = diffs[0]
+                                max_diff = max(10.0, self.raw_bpm * 0.12)
+                                if min_diff <= max_diff:
+                                    alpha = 0.35 if self.bpm_lock_count < 8 else 0.10
+                                    self.raw_bpm = (self.raw_bpm * (1.0 - alpha)) + (best_cand * alpha)
+                                    self.bpm_lock_count = min(30, self.bpm_lock_count + 1)
                                 else:
-                                    while best_cand > 175.0: best_cand *= 0.5
-                                    while best_cand < 85.0: best_cand *= 2.0
-                                    self.raw_bpm = best_cand
-                                    self.bpm_lock_count = 1
+                                    if self.bpm_lock_count > 2:
+                                        self.bpm_lock_count -= 2
+                                    else:
+                                        while best_cand > 175.0: best_cand *= 0.5
+                                        while best_cand < 85.0: best_cand *= 2.0
+                                        self.raw_bpm = best_cand
+                                        self.bpm_lock_count = 1
 
-                        self.bpm = round(self.raw_bpm)
-                        self.duration_between_beats = round(60000.0 / self.bpm)
+                            self.bpm = round(self.raw_bpm)
+                            self.duration_between_beats = round(60000.0 / self.bpm)
+            else:
+                self.beat_delay_buffer.clear()
+                self.raw_bpm = 0.0
+                self.bpm_lock_count = 0
+                self.bpm = 0
             self.last_beat_timestamp = t
         else:
             if dt > 3000:
@@ -405,6 +412,13 @@ class SimulatedAudioClassifier:
                     self.beat_probability = (self.beat_probability * 0.88) + (target_prob * 0.12)
                 if self.beat_probability < 0.02:
                     self.beat_probability = 0.0
+
+        # 11. BPM Gating: BPM is only calculated and reported during active beat sections (verse or chorus with non-zero beat probability)
+        if self.presence == "quiet" or self.semantic_state != "music" or self.phrase_state not in ("verse", "chorus") or self.beat_probability <= 0.01:
+            self.bpm = 0
+            self.raw_bpm = 0.0
+            self.bpm_lock_count = 0
+            self.beat_delay_buffer.clear()
 
 
 def format_duration(seconds: float) -> str:

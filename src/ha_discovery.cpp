@@ -41,6 +41,8 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
   };
 
   // Clear legacy discovery topics to avoid orphaned entities in HA
+  mqtt->publish(("homeassistant/binary_sensor/" + chipId + "_audio_sound/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/binary_sensor/" + chipId + "_sound/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_level/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_peak_level/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_peak/config").c_str(), 0, true, "");
@@ -60,7 +62,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     doc["stat_t"] = baseTopic + "level";
     doc["unit_of_meas"] = "%";
     doc["stat_cla"] = "measurement";
-    doc["icon"] = "mdi:volume-high";
+    doc["icon"] = "mdi:volume-medium";
     doc["uniq_id"] = chipId + "_audio_level_rms";
     doc["avty_t"] = statusTopic;
     doc["pl_avail"] = "online";
@@ -87,7 +89,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     doc["stat_t"] = baseTopic + "peak";
     doc["unit_of_meas"] = "%";
     doc["stat_cla"] = "measurement";
-    doc["icon"] = "mdi:volume-vibrate";
+    doc["icon"] = "mdi:volume-maximum";
     doc["uniq_id"] = chipId + "_audio_level_peak";
     doc["avty_t"] = statusTopic;
     doc["pl_avail"] = "online";
@@ -113,6 +115,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     doc["name"] = "Audio Detected";
     doc["stat_t"] = baseTopic + "detected";
     doc["dev_cla"] = "sound";
+    doc["icon"] = "mdi:ear-hearing";
     doc["pl_on"] = "ON";
     doc["pl_off"] = "OFF";
     doc["uniq_id"] = chipId + "_audio_detected";
@@ -167,7 +170,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #endif
     doc["name"] = "Audio Source Status";
     doc["stat_t"] = baseTopic + "status";
-    doc["icon"] = "mdi:information-outline";
+    doc["icon"] = "mdi:microphone-outline";
     doc["entity_category"] = "diagnostic";
     doc["uniq_id"] = chipId + "_audio_status";
     doc["avty_t"] = statusTopic;
@@ -200,7 +203,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     opts.add("chorus");
     opts.add("breakdown");
     opts.add("outro");
-    doc["icon"] = "mdi:music-note-eighth";
+    doc["icon"] = "mdi:playlist-music";
     doc["uniq_id"] = chipId + "_music_phrase";
     doc["avty_t"] = statusTopic;
     doc["pl_avail"] = "online";
@@ -278,6 +281,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #endif
     doc["name"] = "Music Beat Probability";
     doc["stat_t"] = baseTopic + "beat_probability";
+    doc["unit_of_meas"] = "%";
     doc["stat_cla"] = "measurement";
     doc["icon"] = "mdi:drum";
     doc["uniq_id"] = chipId + "_music_beat_probability";
@@ -380,7 +384,7 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
     mqtt->publish((base + "bpm").c_str(), 0, false, bpmBuf);
 
     char probBuf[16];
-    snprintf(probBuf, sizeof(probBuf), "%.2f", classifier.getBeatProbability());
+    snprintf(probBuf, sizeof(probBuf), "%.1f", classifier.getBeatProbabilityPercent());
     mqtt->publish((base + "beat_probability").c_str(), 0, false, probBuf);
 
     lastPubTime = now;
@@ -388,7 +392,6 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
 
   if (force || stateChanged || timeForHeartbeat) {
     mqtt->publish((base + "detected").c_str(), 0, false, soundState ? "ON" : "OFF");
-    mqtt->publish((base + "sound").c_str(), 0, false, soundState ? "ON" : "OFF");
     mqtt->publish((base + "type").c_str(), 0, false, classifier.getSemanticStateStr());
     mqtt->publish((base + "state").c_str(), 0, false, classifier.getSemanticStateStr());
     mqtt->publish((base + "phrase").c_str(), 0, false, classifier.getPhraseStateStr());

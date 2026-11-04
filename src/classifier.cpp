@@ -406,93 +406,101 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     beatIdx = (beatIdx + 1) % MAX_BEATS;
     if (beatCount < MAX_BEATS) beatCount++;
 
-    if (lastBeatTimestamp > 0 && durationSinceLastBeat <= 2000) {
-      // Skipped-beat normalization:
-      // If beats were skipped (breaks, syncopation), divide duration by elapsed beats
-      uint32_t numBeats = (durationBetweenBeats > 0) ? (uint32_t)roundf((float)durationSinceLastBeat / (float)durationBetweenBeats) : 1;
-      if (numBeats == 0) numBeats = 1;
-      uint32_t normIntervalMs = durationSinceLastBeat / numBeats;
+    bool inBeatPhrase = (phraseState == MusicPhrase::VERSE || phraseState == MusicPhrase::CHORUS);
+    if (inBeatPhrase && (beatProbability > 0.01f || beatCount >= 1)) {
+      if (lastBeatTimestamp > 0 && durationSinceLastBeat <= 2000) {
+        // Skipped-beat normalization:
+        // If beats were skipped (breaks, syncopation), divide duration by elapsed beats
+        uint32_t numBeats = (durationBetweenBeats > 0) ? (uint32_t)roundf((float)durationSinceLastBeat / (float)durationBetweenBeats) : 1;
+        if (numBeats == 0) numBeats = 1;
+        uint32_t normIntervalMs = durationSinceLastBeat / numBeats;
 
-      if (normIntervalMs >= 250 && normIntervalMs <= 750) {
-        beatDelayBuffer.add((float)(normIntervalMs / 10)); // stored in 10ms units
-        beatDelayBuffer.calculate();
-        if (beatDelayBuffer.count >= 4 && beatDelayBuffer.stdDev < 14.0f) {
-          float avgIntervalMs = beatDelayBuffer.mean * 10.0f;
-          if (avgIntervalMs >= 250.0f && avgIntervalMs <= 1000.0f) {
-            uint16_t curBpm = (uint16_t)roundf(60000.0f / avgIntervalMs);
+        if (normIntervalMs >= 250 && normIntervalMs <= 750) {
+          beatDelayBuffer.add((float)(normIntervalMs / 10)); // stored in 10ms units
+          beatDelayBuffer.calculate();
+          if (beatDelayBuffer.count >= 4 && beatDelayBuffer.stdDev < 14.0f) {
+            float avgIntervalMs = beatDelayBuffer.mean * 10.0f;
+            if (avgIntervalMs >= 250.0f && avgIntervalMs <= 1000.0f) {
+              uint16_t curBpm = (uint16_t)roundf(60000.0f / avgIntervalMs);
 
-            if (curBpm >= 40 && curBpm <= 400) {
-              if (rawBpm <= 0.0f || beatsPerMinute == 0) {
-                // Initial folding into standard human musical tempo octave [85 - 175 BPM]
-                while (curBpm > 175) curBpm /= 2;
-                while (curBpm < 85) curBpm *= 2;
-                rawBpm = (float)curBpm;
-                beatsPerMinute = curBpm;
-                bpmLockCount = 1;
-              } else {
-                // Harmonic matching against established tempo (rawBpm)
-                // Test fundamental (1x), octave above (2x), and octave below (0.5x)
-                float cand1 = (float)curBpm;
-                float cand2 = (float)curBpm * 2.0f;
-                float candHalf = (float)curBpm * 0.5f;
-
-                float diff1 = fabsf(cand1 - rawBpm);
-                float diff2 = fabsf(cand2 - rawBpm);
-                float diffHalf = fabsf(candHalf - rawBpm);
-
-                float bestCand = cand1;
-                float minDiff = diff1;
-
-                if (diff2 < minDiff) {
-                  minDiff = diff2;
-                  bestCand = cand2;
-                }
-                if (diffHalf < minDiff) {
-                  minDiff = diffHalf;
-                  bestCand = candHalf;
-                }
-
-                // Permissible tempo tracking tolerance: up to 12% or 10 BPM
-                float maxDiff = fmaxf(10.0f, rawBpm * 0.12f);
-
-                if (minDiff <= maxDiff) {
-                  // Harmonic match: smooth rawBpm towards the matched harmonic (faster during initial lock, slower when settled)
-                  float alpha = (bpmLockCount < 8) ? 0.35f : 0.10f;
-                  rawBpm = (rawBpm * (1.0f - alpha)) + (bestCand * alpha);
-                  if (bpmLockCount < 30) bpmLockCount++;
+              if (curBpm >= 40 && curBpm <= 400) {
+                if (rawBpm <= 0.0f || beatsPerMinute == 0) {
+                  // Initial folding into standard human musical tempo octave [85 - 175 BPM]
+                  while (curBpm > 175) curBpm /= 2;
+                  while (curBpm < 85) curBpm *= 2;
+                  rawBpm = (float)curBpm;
+                  beatsPerMinute = curBpm;
+                  bpmLockCount = 1;
                 } else {
-                  // Divergence: slowly reduce lock confidence
-                  if (bpmLockCount > 2) {
-                    bpmLockCount -= 2;
+                  // Harmonic matching against established tempo (rawBpm)
+                  // Test fundamental (1x), octave above (2x), and octave below (0.5x)
+                  float cand1 = (float)curBpm;
+                  float cand2 = (float)curBpm * 2.0f;
+                  float candHalf = (float)curBpm * 0.5f;
+
+                  float diff1 = fabsf(cand1 - rawBpm);
+                  float diff2 = fabsf(cand2 - rawBpm);
+                  float diffHalf = fabsf(candHalf - rawBpm);
+
+                  float bestCand = cand1;
+                  float minDiff = diff1;
+
+                  if (diff2 < minDiff) {
+                    minDiff = diff2;
+                    bestCand = cand2;
+                  }
+                  if (diffHalf < minDiff) {
+                    minDiff = diffHalf;
+                    bestCand = candHalf;
+                  }
+
+                  // Permissible tempo tracking tolerance: up to 12% or 10 BPM
+                  float maxDiff = fmaxf(10.0f, rawBpm * 0.12f);
+
+                  if (minDiff <= maxDiff) {
+                    // Harmonic match: smooth rawBpm towards the matched harmonic (faster during initial lock, slower when settled)
+                    float alpha = (bpmLockCount < 8) ? 0.35f : 0.10f;
+                    rawBpm = (rawBpm * (1.0f - alpha)) + (bestCand * alpha);
+                    if (bpmLockCount < 30) bpmLockCount++;
                   } else {
-                    // Lock lost: fold bestCand into [85 - 175] and reset
-                    while (bestCand > 175.0f) bestCand *= 0.5f;
-                    while (bestCand < 85.0f) bestCand *= 2.0f;
-                    rawBpm = bestCand;
-                    bpmLockCount = 1;
+                    // Divergence: slowly reduce lock confidence
+                    if (bpmLockCount > 2) {
+                      bpmLockCount -= 2;
+                    } else {
+                      // Lock lost: fold bestCand into [85 - 175] and reset
+                      while (bestCand > 175.0f) bestCand *= 0.5f;
+                      while (bestCand < 85.0f) bestCand *= 2.0f;
+                      rawBpm = bestCand;
+                      bpmLockCount = 1;
+                    }
+                  }
+
+                  // Stable integer BPM output
+                  if (bpmLockCount >= 3) {
+                    uint16_t targetBpm = (uint16_t)roundf(rawBpm);
+                    if (targetBpm != beatsPerMinute) {
+                      beatsPerMinute = targetBpm;
+                    }
+                  } else {
+                    beatsPerMinute = (uint16_t)roundf(rawBpm);
                   }
                 }
 
-                // Stable integer BPM output
-                if (bpmLockCount >= 3) {
-                  uint16_t targetBpm = (uint16_t)roundf(rawBpm);
-                  if (targetBpm != beatsPerMinute) {
-                    beatsPerMinute = targetBpm;
-                  }
-                } else {
-                  beatsPerMinute = (uint16_t)roundf(rawBpm);
-                }
+                durationBetweenBeats = (uint32_t)roundf(60000.0f / (float)beatsPerMinute);
+                durationBetweenBars = durationBetweenBeats * 4;
+                durationBetweenPhrases = durationBetweenBars * 8; // 8 bars per phrase (32 beats)
+                lastBpmUpdateTime = now;
+                beatRegularity = 0.90f;
               }
-
-              durationBetweenBeats = (uint32_t)roundf(60000.0f / (float)beatsPerMinute);
-              durationBetweenBars = durationBetweenBeats * 4;
-              durationBetweenPhrases = durationBetweenBars * 8; // 8 bars per phrase (32 beats)
-              lastBpmUpdateTime = now;
-              beatRegularity = 0.90f;
             }
           }
         }
       }
+    } else {
+      beatDelayBuffer.reset();
+      rawBpm = 0.0f;
+      bpmLockCount = 0;
+      beatsPerMinute = 0;
     }
 
     // Inter-beat regularity from circular history
@@ -918,5 +926,15 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       }
       if (beatProbability < 0.02f) beatProbability = 0.0f;
     }
+  }
+
+  // 11. BPM Gating: BPM is only calculated and reported during active beat sections (verse or chorus with active beat probability)
+  if (presence == SoundPresence::QUIET || semanticState != AudioSemanticState::MUSIC ||
+      (phraseState != MusicPhrase::VERSE && phraseState != MusicPhrase::CHORUS) ||
+      beatProbability <= 0.01f) {
+    beatsPerMinute = 0;
+    rawBpm = 0.0f;
+    bpmLockCount = 0;
+    beatDelayBuffer.reset();
   }
 }
