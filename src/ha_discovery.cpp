@@ -30,7 +30,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 
   auto buildDevice = [&](JsonObject& dev) {
     dev["name"] = devName;
-    dev["sw"] = "0.1.0";
+    dev["sw"] = versionString;
     dev["mdl"] = "WLED";
     JsonArray ids = dev.createNestedArray("ids");
     ids.add(chipId);
