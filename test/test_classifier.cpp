@@ -178,7 +178,7 @@ void test_experimental_beat_and_phrasing(void) {
   TEST_ASSERT_EQUAL_STRING("Chorus", classifier.getPhraseStateStr());
 
   // Continue steady groove past the initial 8-bar phrase (> 16s at 120 BPM)
-  for (uint32_t t = 8020; t <= 20000; t += 20) {
+  for (uint32_t t = 8020; t <= 26000; t += 20) {
     frame.timestampMs = t;
     frame.levelPercent = 25.0f;
     for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 15;
@@ -419,6 +419,16 @@ void test_replay_recorded_adjacent_room_music_session(void) {
   TEST_ASSERT_TRUE(ok);
 }
 
+void test_replay_recorded_speech_session(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.musicHoldMs = 30000;
+  AudioClassifier classifier(cfg);
+
+  bool ok = FixtureReplayer::replayAndVerify("test/fixtures/session_20261104_210347.json", classifier);
+  TEST_ASSERT_TRUE(ok);
+}
+
 void test_1s_average_and_peak_tracking(void) {
   AudioClassifier classifier;
   AudioFrame frame;
@@ -516,13 +526,13 @@ void test_outlier_soft_bass_hit_before_drop_reverts(void) {
   uint32_t lastBeat = 0;
   for (uint32_t t = 0; t <= 3000; t += 20) {
     frame.timestampMs = t;
-    frame.levelPercent = 35.0f;
-    frame.rawVolume = 85.0f;
+    frame.levelPercent = 28.0f;
+    frame.rawVolume = 70.0f;
     for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 20;
     if (t - lastBeat >= 500) {
       frame.isPeak = true;
-      frame.bands[0] = 120;
-      frame.bands[1] = 100;
+      frame.bands[0] = 55;
+      frame.bands[1] = 40;
       lastBeat = t;
     } else {
       frame.isPeak = false;
@@ -719,6 +729,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_replay_recorded_ambient_noise_session);
   RUN_TEST(test_replay_recorded_3min_phrase_changes_session);
   RUN_TEST(test_replay_recorded_adjacent_room_music_session);
+  RUN_TEST(test_replay_recorded_speech_session);
   RUN_TEST(test_1s_average_and_peak_tracking);
   RUN_TEST(test_music_beat_probability);
   RUN_TEST(test_recorded_session_beat_probability);

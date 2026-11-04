@@ -347,12 +347,10 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   // Mid-heavy check: compare average mid band against average bass band
   float midAvg = (float)(frame.bands[2] + frame.bands[3] + frame.bands[4]) / 3.0f;
   float bassAvg = (float)(frame.bands[0] + frame.bands[1]) / 2.0f;
-  bool isMidOverpowering = (midAvg > bassAvg * 2.2f);
+  bool isMidOverpowering = (midAvg > bassAvg * 1.20f);
 
-  if (!hasBass) {
+  if (!hasBass || isMidOverpowering) {
     beatFeature = 0.0f;
-  } else if (isMidOverpowering) {
-    beatFeature *= 0.25f;
   } else if (effRawVol < 25.0f) {
     beatFeature *= 0.30f;
   } else if (spread > bassPercent * 1.2f && bassRatio < 0.35f) {
@@ -427,7 +425,8 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     beatIdx = (beatIdx + 1) % MAX_BEATS;
     if (beatCount < MAX_BEATS) beatCount++;
 
-    bool inBeatPhrase = (phraseState == MusicPhrase::VERSE || phraseState == MusicPhrase::CHORUS || phraseState == MusicPhrase::BUILDUP);
+    bool inBeatPhrase = (semanticState == AudioSemanticState::MUSIC || beatProbability >= 0.15f || beatRegularity >= 0.50f) &&
+                        (phraseState == MusicPhrase::VERSE || phraseState == MusicPhrase::CHORUS || phraseState == MusicPhrase::BUILDUP || phraseState == MusicPhrase::INTRO);
     bool hasRecentBpm = (beatsPerMinute > 0) && (durationBetweenBeats > 0) && (now - lastBpmUpdateTime <= 8 * durationBetweenBeats);
     if ((beatProbability >= 0.15f || hasRecentBpm || (beatsPerMinute == 0 && beatCount >= 2)) && inBeatPhrase) {
       if (lastBeatTimestamp > 0 && durationSinceLastBeat <= 2000) {
@@ -640,10 +639,17 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   bool hasMusicalEvidence = false;
   float instantConfidence = 0.0f;
 
+  float highEnergy = 0.0f;
+  for (size_t i = 8; i < NUM_AUDIO_BANDS; i++) {
+    highEnergy += frame.bands[i];
+  }
+  float b01 = (float)(frame.bands[0] + frame.bands[1]);
+  float b23 = (float)(frame.bands[2] + frame.bands[3]);
+
   if (beatRegularity > 0.50f && (now - lastBeatTimestamp <= 3000)) {
     hasMusicalEvidence = true;
     instantConfidence = beatRegularity;
-  } else if (bassRatio > 0.35f && currentLevel > (noiseFloor + 5.0f)) {
+  } else if (((b01 >= b23 * 1.05f && b01 >= 10.0f) || (highEnergy >= 15.0f && b01 >= 20.0f)) && !isMidOverpowering && currentLevel > (noiseFloor + 5.0f)) {
     hasMusicalEvidence = true;
     instantConfidence = 0.75f;
   }
@@ -670,7 +676,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       phraseState = MusicPhrase::VERSE;
     }
   } else {
-    if (musicConfidence >= 0.60f || (beatRegularity >= 0.70f && currentLevel > noiseFloor + 5.0f) || (beatsPerMinute > 0 && currentLevel > noiseFloor + 4.0f)) {
+    if (musicConfidence >= 0.60f || (beatRegularity >= 0.70f && currentLevel > noiseFloor + 5.0f)) {
       semanticState = AudioSemanticState::MUSIC;
       lastMusicEvidenceTime = now;
       if (musicConfidence < 0.70f) musicConfidence = 0.70f;
@@ -738,7 +744,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
           }
         }
         // Case 2: Premature Downward Drop (e.g. dropped from CHORUS or VERSE due to 1-2 missing beats in bar 8)
-        else if (soundEnergy < tentativePrevEnergy && tentativePrevEnergy >= SoundEnergy::VERSE) {
+        else if (soundEnergy < SoundEnergy::VERSE && tentativePrevEnergy >= SoundEnergy::VERSE) {
           // If a beat with bass resumes within the tentative window, it was just 1-2 missing beats in bar 8!
           bool bassResumed = (hasBass || bassRatio >= 0.25f || peak1sLevel >= 40.0f);
           if (beatDetected && bassResumed) {
@@ -765,9 +771,9 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
                               : (phraseDur - phraseOffset);
     bool nearPhraseBoundary = (durationBetweenBars > 0) && (distToBoundary <= durationBetweenBars);
 
-    bool dropInLastPhrase = (now - lastDropTimestamp <= phraseDur);
-    bool beatInLastPhrase = (now - lastBeatTimestamp <= phraseDur);
-    bool beatInLastBar = (now - lastBeatTimestamp <= barDur);
+    bool dropInLastPhrase = (lastDropTimestamp > 0) && (now - lastDropTimestamp <= phraseDur);
+    bool beatInLastPhrase = (lastBeatTimestamp > 0) && (now - lastBeatTimestamp <= phraseDur);
+    bool beatInLastBar = (lastBeatTimestamp > 0) && (now - lastBeatTimestamp <= barDur);
     bool constantBeats = (beatsPerMinute > 0) && (now - lastBpmUpdateTime <= 2 * barDur);
     uint32_t barsWithoutBeats = (durationBetweenBars > 0) ? (durationSinceLastBeat / durationBetweenBars) : (durationSinceLastBeat / 2000);
     uint32_t barsSinceEnergyUpdate = (barDur > 0) ? ((now - lastEnergyUpdateTime) / barDur) : 0;

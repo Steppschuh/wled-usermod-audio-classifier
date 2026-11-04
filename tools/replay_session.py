@@ -359,12 +359,10 @@ class SimulatedAudioClassifier:
 
         mid_avg = float(b2 + b3 + b4) / 3.0
         bass_avg = float(b0 + b1) / 2.0
-        is_mid_overpowering = (mid_avg > bass_avg * 2.2)
+        is_mid_overpowering = (mid_avg > bass_avg * 1.20)
 
-        if not has_bass:
+        if not has_bass or is_mid_overpowering:
             beat_feature = 0.0
-        elif is_mid_overpowering:
-            beat_feature *= 0.25
         elif eff_raw_vol < 25.0:
             beat_feature *= 0.30
         elif spread > bass_percent * 1.2 and bass_ratio < 0.35:
@@ -436,7 +434,7 @@ class SimulatedAudioClassifier:
             if self.beat_count < 16:
                 self.beat_count += 1
 
-            in_beat_phrase = self.phrase_state in ("verse", "chorus", "buildup")
+            in_beat_phrase = (self.semantic_state == "music" or self.beat_probability >= 0.15 or self.beat_regularity >= 0.50) and self.phrase_state in ("verse", "chorus", "buildup", "intro")
             has_recent_bpm = (self.beats_per_minute > 0 and self.duration_between_beats > 0 and (now - self.last_bpm_update_time) <= 8 * self.duration_between_beats)
             if (self.beat_probability >= 0.15 or has_recent_bpm or (self.beats_per_minute == 0 and self.beat_count >= 2)) and in_beat_phrase:
                 if self.last_beat_timestamp > 0 and duration_since_last_beat <= 2000:
@@ -612,10 +610,13 @@ class SimulatedAudioClassifier:
         has_musical_evidence = False
         instant_confidence = 0.0
 
+        high_energy = sum(bands[8:16])
+        b01 = float(bands[0] + bands[1])
+        b23 = float(bands[2] + bands[3])
         if self.beat_regularity > 0.50 and (now - self.last_beat_timestamp <= 3000):
             has_musical_evidence = True
             instant_confidence = self.beat_regularity
-        elif bass_ratio > 0.35 and self.current_level > (self.noise_floor + 5.0):
+        elif (((b01 >= b23 * 1.05 and b01 >= 10.0) or (high_energy >= 15.0 and b01 >= 20.0)) and not is_mid_overpowering and self.current_level > (self.noise_floor + 5.0)):
             has_musical_evidence = True
             instant_confidence = 0.75
 
@@ -639,7 +640,7 @@ class SimulatedAudioClassifier:
                     self.sound_energy = SoundEnergy.SILENCE
                 self.phrase_state = "verse"
         else:
-            if self.music_confidence >= 0.60 or (self.beat_regularity >= 0.70 and self.current_level > self.noise_floor + 5.0) or (self.beats_per_minute > 0 and self.current_level > self.noise_floor + 4.0):
+            if self.music_confidence >= 0.60 or (self.beat_regularity >= 0.70 and self.current_level > self.noise_floor + 5.0):
                 self.semantic_state = "music"
                 self.last_music_evidence_time = now
                 if self.music_confidence < 0.70:
@@ -695,7 +696,7 @@ class SimulatedAudioClassifier:
                                 self.is_tentative_transition = False
                                 energy_before_update = self.sound_energy
                                 phrase_before_update = self.phrase_state
-                    elif self.sound_energy < self.tentative_prev_energy and self.tentative_prev_energy >= SoundEnergy.VERSE:
+                    elif self.sound_energy < SoundEnergy.VERSE and self.tentative_prev_energy >= SoundEnergy.VERSE:
                         bass_resumed = (has_bass or bass_ratio >= 0.25 or self.peak_1s_level >= 40.0)
                         if beat_detected and bass_resumed:
                             self.sound_energy = self.tentative_prev_energy
@@ -712,9 +713,9 @@ class SimulatedAudioClassifier:
             dist_to_boundary = phrase_offset if (phrase_offset < phrase_dur // 2) else (phrase_dur - phrase_offset)
             near_phrase_boundary = (self.duration_between_bars > 0) and (dist_to_boundary <= self.duration_between_bars)
 
-            drop_in_last_phrase = (now - self.last_drop_timestamp <= phrase_dur)
-            beat_in_last_phrase = (now - self.last_beat_timestamp <= phrase_dur)
-            beat_in_last_bar = (now - self.last_beat_timestamp <= bar_dur)
+            drop_in_last_phrase = (self.last_drop_timestamp > 0) and (now - self.last_drop_timestamp <= phrase_dur)
+            beat_in_last_phrase = (self.last_beat_timestamp > 0) and (now - self.last_beat_timestamp <= phrase_dur)
+            beat_in_last_bar = (self.last_beat_timestamp > 0) and (now - self.last_beat_timestamp <= bar_dur)
             constant_beats = (self.beats_per_minute > 0) and (now - self.last_bpm_update_time <= 2 * bar_dur)
             bars_without_beats = (duration_since_last_beat // self.duration_between_bars) if self.duration_between_bars > 0 else (duration_since_last_beat // 2000)
             bars_since_energy_update = ((now - self.last_energy_update_time) // bar_dur) if bar_dur > 0 else 0
