@@ -719,24 +719,28 @@ class SimulatedAudioClassifier:
             bars_without_beats = (duration_since_last_beat // self.duration_between_bars) if self.duration_between_bars > 0 else (duration_since_last_beat // 2000)
             bars_since_energy_update = ((now - self.last_energy_update_time) // bar_dur) if bar_dur > 0 else 0
 
-            is_volume_collapsed = (self.current_level < (self.noise_floor + 5.0) and self.average_1s_level < (self.noise_floor + 8.0)) or (self.peak_1s_level < 28.0)
+            is_volume_collapsed = (self.current_level < (self.noise_floor + 4.0) and self.average_1s_level < (self.noise_floor + 6.0)) or (
+                self.peak_1s_level < 12.0 and self.average_1s_level < 8.0
+            )
             no_beats_recent = (duration_since_last_beat > 1200 or bars_without_beats >= 1)
-            has_active_beat_groove = (duration_since_last_beat <= (bar_dur * 3 // 2)) and (self.beat_probability >= 0.15 or constant_beats or beat_detected)
+            has_active_beat_groove = (duration_since_last_beat <= (bar_dur * 3 // 2)) and (self.beat_probability >= 0.20 or constant_beats)
 
             updated_energy = self.sound_energy
 
             if is_volume_collapsed and no_beats_recent:
-                if self.sound_energy in (SoundEnergy.BREAKDOWN, SoundEnergy.OUTRO) and (bars_since_energy_update >= 8 or self.current_level < self.noise_floor + 3.0):
+                if self.sound_energy == SoundEnergy.OUTRO:
+                    updated_energy = SoundEnergy.OUTRO
+                elif self.sound_energy == SoundEnergy.BREAKDOWN and (bars_since_energy_update >= 8 or self.current_level < self.noise_floor + 3.0):
                     updated_energy = SoundEnergy.OUTRO
                 else:
                     updated_energy = SoundEnergy.BREAKDOWN
-            elif (self.peak_1s_level >= 48.0 or self.average_1s_level >= 36.0 or drop_in_last_phrase) and (beat_in_last_phrase or beat_detected):
+            elif (self.peak_1s_level >= 45.0 or self.average_1s_level >= 34.0 or drop_in_last_phrase) and (beat_in_last_phrase or beat_detected):
                 updated_energy = SoundEnergy.CHORUS
-            elif has_active_beat_groove and (self.peak_1s_level >= 28.0 or self.average_1s_level >= 20.0):
+            elif has_active_beat_groove and (self.peak_1s_level >= 14.0 or self.average_1s_level >= 10.0):
                 if self.sound_energy == SoundEnergy.CHORUS:
-                    if not self.is_tentative_transition and time_since_phrase_change < phrase_dur and self.peak_1s_level >= 38.0:
+                    if not self.is_tentative_transition and time_since_phrase_change < phrase_dur and self.peak_1s_level >= 32.0:
                         updated_energy = SoundEnergy.CHORUS
-                    elif near_phrase_boundary and (not drop_in_last_phrase or bass_trend < 0.90) and (self.peak_1s_level < 52.0):
+                    elif near_phrase_boundary and (not drop_in_last_phrase or bass_trend < 0.90) and (self.peak_1s_level < 48.0):
                         updated_energy = SoundEnergy.VERSE
                     else:
                         updated_energy = SoundEnergy.CHORUS
@@ -748,7 +752,7 @@ class SimulatedAudioClassifier:
                         updated_energy = SoundEnergy.OUTRO
                     else:
                         updated_energy = SoundEnergy.BREAKDOWN
-                elif bass_trend > 1.15 or (now - self.last_drop_timestamp > phrase_dur and bars_without_beats <= 4 and self.peak_1s_level >= 24.0):
+                elif bass_trend > 1.15 or (now - self.last_drop_timestamp > phrase_dur and bars_without_beats <= 4 and self.peak_1s_level >= 12.0):
                     updated_energy = SoundEnergy.BUILDUP
                 else:
                     updated_energy = SoundEnergy.INTRO
@@ -756,27 +760,40 @@ class SimulatedAudioClassifier:
             immediate_beat_transition = beat_detected and (updated_energy != self.sound_energy)
             if (now - self.last_energy_update_time >= 1000) or immediate_beat_transition:
                 if updated_energy > self.sound_energy:
+                    prev_energy = self.sound_energy
                     if self.sound_energy == SoundEnergy.OUTRO:
-                        if drop_in_last_phrase or self.peak_1s_level >= 52.0:
+                        if drop_in_last_phrase or self.peak_1s_level >= 45.0:
                             self.sound_energy = SoundEnergy.CHORUS
-                        elif bars_since_energy_update >= 2:
+                        elif updated_energy >= SoundEnergy.VERSE:
                             self.sound_energy = SoundEnergy.VERSE
+                        else:
+                            self.sound_energy = updated_energy
                     elif self.sound_energy == SoundEnergy.INTRO:
-                        if drop_in_last_phrase or self.peak_1s_level >= 52.0:
+                        if drop_in_last_phrase or self.peak_1s_level >= 45.0:
                             self.sound_energy = SoundEnergy.CHORUS
-                        elif bars_since_energy_update >= 2:
+                        elif updated_energy >= SoundEnergy.VERSE:
                             self.sound_energy = SoundEnergy.VERSE
+                        else:
+                            self.sound_energy = updated_energy
+                    elif self.sound_energy == SoundEnergy.BREAKDOWN:
+                        if drop_in_last_phrase or self.peak_1s_level >= 45.0:
+                            self.sound_energy = SoundEnergy.CHORUS
+                        elif updated_energy >= SoundEnergy.VERSE:
+                            self.sound_energy = SoundEnergy.VERSE
+                        else:
+                            self.sound_energy = updated_energy
                     elif self.sound_energy == SoundEnergy.VERSE:
-                        if drop_in_last_phrase or self.peak_1s_level >= 52.0:
+                        if drop_in_last_phrase or self.peak_1s_level >= 45.0:
                             self.sound_energy = SoundEnergy.CHORUS
                         elif bass_trend > 1.25:
                             self.sound_energy = SoundEnergy.BUILDUP
                     elif self.sound_energy == SoundEnergy.BUILDUP:
-                        if drop_in_last_phrase or (bass_trend > 1.4 and (beat_in_last_bar or beat_detected)) or self.peak_1s_level >= 52.0:
+                        if drop_in_last_phrase or (bass_trend > 1.4 and (beat_in_last_bar or beat_detected)) or self.peak_1s_level >= 45.0:
                             self.sound_energy = SoundEnergy.CHORUS
                     else:
                         self.sound_energy = updated_energy
-                    self.last_energy_update_time = now
+                    if self.sound_energy != prev_energy:
+                        self.last_energy_update_time = now
                 elif updated_energy < self.sound_energy:
                     if self.sound_energy == SoundEnergy.CHORUS:
                         if not self.is_tentative_transition and time_since_phrase_change < phrase_dur and not is_volume_collapsed:

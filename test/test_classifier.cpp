@@ -409,6 +409,16 @@ void test_replay_recorded_3min_phrase_changes_session(void) {
   TEST_ASSERT_TRUE(ok);
 }
 
+void test_replay_recorded_adjacent_room_music_session(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.musicHoldMs = 30000;
+  AudioClassifier classifier(cfg);
+
+  bool ok = FixtureReplayer::replayAndVerify("test/fixtures/session_20261104_201823.json", classifier);
+  TEST_ASSERT_TRUE(ok);
+}
+
 void test_1s_average_and_peak_tracking(void) {
   AudioClassifier classifier;
   AudioFrame frame;
@@ -708,6 +718,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_replay_recorded_music_session);
   RUN_TEST(test_replay_recorded_ambient_noise_session);
   RUN_TEST(test_replay_recorded_3min_phrase_changes_session);
+  RUN_TEST(test_replay_recorded_adjacent_room_music_session);
   RUN_TEST(test_1s_average_and_peak_tracking);
   RUN_TEST(test_music_beat_probability);
   RUN_TEST(test_recorded_session_beat_probability);
