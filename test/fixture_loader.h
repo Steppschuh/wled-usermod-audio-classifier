@@ -179,10 +179,18 @@ public:
       uint32_t curSec = frame.timestampMs / 1000;
       if (curSec != lastSnapSec) {
         lastSnapSec = curSec;
+        auto normStr = [](const std::string& s) -> std::string {
+          std::string out;
+          for (char c : s) {
+            if (c == ' ' || c == '-') out += '_';
+            else out += (char)tolower(c);
+          }
+          return out;
+        };
         SecondSnap snap;
         snap.presence = (classifier.getPresence() == SoundPresence::SOUND) ? "sound" : "quiet";
-        snap.state = classifier.getSemanticStateStr();
-        snap.phrase = classifier.getPhraseStateStr();
+        snap.state = normStr(classifier.getSemanticStateStr());
+        snap.phrase = normStr(classifier.getPhraseStateStr());
         snap.bpm = classifier.getBPM();
         snapshots[curSec] = snap;
 
@@ -193,6 +201,15 @@ public:
       }
 
       // Evaluate assertions
+      auto norm = [](const std::string& s) -> std::string {
+        std::string out;
+        for (char c : s) {
+          if (c == ' ' || c == '-') out += '_';
+          else out += (char)tolower(c);
+        }
+        return out;
+      };
+
       for (auto& a : assertions) {
         // Point assertion
         if (a.timeSec >= 0.0f && !a.fired && frameTimeSec >= a.timeSec) {
@@ -207,7 +224,7 @@ public:
           }
           if (!a.expectedState.empty()) {
             const char* actualState = classifier.getSemanticStateStr();
-            if (a.expectedState != actualState) {
+            if (norm(a.expectedState) != norm(actualState)) {
               std::string msg = "Assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
                                 "s: Expected state '" + a.expectedState + "' but got '" + actualState + "'";
               TEST_FAIL_MESSAGE(msg.c_str());
@@ -215,7 +232,7 @@ public:
           }
           if (!a.expectedPhrase.empty()) {
             const char* actualPhrase = classifier.getPhraseStateStr();
-            if (a.expectedPhrase != actualPhrase) {
+            if (norm(a.expectedPhrase) != norm(actualPhrase)) {
               std::string msg = "Assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
                                 "s: Expected phrase '" + a.expectedPhrase + "' but got '" + actualPhrase + "'";
               TEST_FAIL_MESSAGE(msg.c_str());
@@ -269,7 +286,7 @@ public:
             }
             if (!a.expectedState.empty()) {
               const char* actualState = classifier.getSemanticStateStr();
-              if (a.expectedState != actualState) {
+              if (norm(a.expectedState) != norm(actualState)) {
                 std::string msg = "Window assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
                                   "s: Expected state '" + a.expectedState + "' but got '" + actualState + "'";
                 TEST_FAIL_MESSAGE(msg.c_str());
@@ -277,7 +294,7 @@ public:
             }
             if (!a.expectedPhrase.empty()) {
               const char* actualPhrase = classifier.getPhraseStateStr();
-              if (a.expectedPhrase != actualPhrase) {
+              if (norm(a.expectedPhrase) != norm(actualPhrase)) {
                 std::string msg = "Window assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
                                   "s: Expected phrase '" + a.expectedPhrase + "' but got '" + actualPhrase + "'";
                 TEST_FAIL_MESSAGE(msg.c_str());

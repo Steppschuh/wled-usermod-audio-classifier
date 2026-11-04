@@ -16,8 +16,8 @@ void test_initial_state_is_quiet_and_silence(void) {
   AudioClassifier classifier;
   TEST_ASSERT_EQUAL_UINT8(SoundPresence::QUIET, classifier.getPresence());
   TEST_ASSERT_FALSE(classifier.isSoundDetected());
-  TEST_ASSERT_EQUAL_STRING("silence", classifier.getSemanticStateStr());
-  TEST_ASSERT_EQUAL_STRING("verse", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_STRING("Silence", classifier.getSemanticStateStr());
+  TEST_ASSERT_EQUAL_STRING("Verse", classifier.getPhraseStateStr());
 }
 
 void test_transient_noise_ignored(void) {
@@ -170,12 +170,12 @@ void test_experimental_beat_and_phrasing(void) {
   }
 
   TEST_ASSERT_TRUE(classifier.isSoundDetected());
-  TEST_ASSERT_EQUAL_STRING("music", classifier.getSemanticStateStr());
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
   TEST_ASSERT_TRUE(classifier.getMusicConfidence() >= 0.6f);
   TEST_ASSERT_UINT16_WITHIN(5, 120, classifier.getBPM());
   TEST_ASSERT_EQUAL_UINT8(100, classifier.getSoundEnergy()); // Climaxes to Chorus / Drop on initial bass explosion
   TEST_ASSERT_EQUAL_STRING("chorus", classifier.getSoundEnergyStr());
-  TEST_ASSERT_EQUAL_STRING("chorus", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_STRING("Chorus", classifier.getPhraseStateStr());
 
   // Continue steady groove past the initial 8-bar phrase (> 16s at 120 BPM)
   for (uint32_t t = 8020; t <= 20000; t += 20) {
@@ -199,7 +199,7 @@ void test_experimental_beat_and_phrasing(void) {
   // Now smoothly stabilizes into VERSE (80%, steady)
   TEST_ASSERT_EQUAL_UINT8(80, classifier.getSoundEnergy());
   TEST_ASSERT_EQUAL_STRING("verse", classifier.getSoundEnergyStr());
-  TEST_ASSERT_EQUAL_STRING("verse", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_STRING("Verse", classifier.getPhraseStateStr());
 }
 
 void test_130_bpm_eighth_note_rejection_and_stability(void) {
@@ -321,7 +321,7 @@ void test_music_hangover_persists_across_breakdown(void) {
     frame.bands[8] = 40;
     classifier.processFrame(frame);
   }
-  TEST_ASSERT_EQUAL_STRING("music", classifier.getSemanticStateStr());
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
   TEST_ASSERT_UINT16_WITHIN(5, 120, classifier.getBPM());
 
   // 2. 25-second breakdown into outro: bass drops completely out, no beat peaks, quiet ambient synth/vocal
@@ -352,11 +352,11 @@ void test_music_hangover_persists_across_breakdown(void) {
   }
 
   // Confirm state is still music at second 35 (25s into breakdown/outro)
-  TEST_ASSERT_EQUAL_STRING("music", classifier.getSemanticStateStr());
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
   TEST_ASSERT_TRUE(sawBreakdownPhrase);
   TEST_ASSERT_TRUE(sawOutroPhrase);
   TEST_ASSERT_EQUAL_UINT8(30, classifier.getSoundEnergy());
-  TEST_ASSERT_EQUAL_STRING("outro", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_STRING("Outro", classifier.getPhraseStateStr());
   // BPM must remain held throughout breakdown and outro
   TEST_ASSERT_UINT16_WITHIN(5, 120, classifier.getBPM());
 
@@ -372,7 +372,7 @@ void test_music_hangover_persists_across_breakdown(void) {
   }
 
   // Now, since 35 seconds of non-musical sound passed (> 30s hold), it cleanly decays to ambient_noise
-  TEST_ASSERT_EQUAL_STRING("ambient_noise", classifier.getSemanticStateStr());
+  TEST_ASSERT_EQUAL_STRING("Ambient Noise", classifier.getSemanticStateStr());
   // When leaving music state, BPM must reset to 0
   TEST_ASSERT_EQUAL_UINT16(0, classifier.getBPM());
 }
@@ -519,7 +519,7 @@ void test_outlier_soft_bass_hit_before_drop_reverts(void) {
     }
     classifier.processFrame(frame);
   }
-  TEST_ASSERT_EQUAL_STRING("music", classifier.getSemanticStateStr());
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
 
   // 2. Transition into a buildup riser for 4 seconds (mids/highs rise, kick stops)
   for (uint32_t t = 3020; t <= 7000; t += 20) {
@@ -530,7 +530,7 @@ void test_outlier_soft_bass_hit_before_drop_reverts(void) {
     for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = (b >= 4) ? 80 : 10;
     classifier.processFrame(frame);
   }
-  TEST_ASSERT_EQUAL_STRING("music", classifier.getSemanticStateStr());
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
 
   // 3. Simulate 1 premature soft bass hit (outlier 1 bar before drop)
   frame.timestampMs = 7020;
@@ -581,7 +581,7 @@ void test_outlier_missing_beat_in_phrase_reverts(void) {
     classifier.processFrame(frame);
   }
 
-  TEST_ASSERT_EQUAL_STRING("chorus", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_STRING("Chorus", classifier.getPhraseStateStr());
   TEST_ASSERT_EQUAL_UINT8(100, classifier.getSoundEnergy());
 
   // 2. Simulate 2 missing beats (tension gap in bar 8, kick drum muted for 800ms)
@@ -612,7 +612,7 @@ void test_outlier_missing_beat_in_phrase_reverts(void) {
   }
 
   // The 2 missing beats must be recognized as an outlier gap and reverted back to chorus!
-  TEST_ASSERT_EQUAL_STRING("chorus", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_STRING("Chorus", classifier.getPhraseStateStr());
   TEST_ASSERT_EQUAL_UINT8(100, classifier.getSoundEnergy());
 }
 

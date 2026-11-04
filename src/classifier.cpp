@@ -96,22 +96,22 @@ void AudioClassifier::setConfig(const ClassifierConfig& newConfig) {
 
 const char* AudioClassifier::getSemanticStateStr() const {
   switch (semanticState) {
-    case AudioSemanticState::SILENCE:       return "silence";
-    case AudioSemanticState::AMBIENT_NOISE: return "ambient_noise";
-    case AudioSemanticState::MUSIC:         return "music";
-    default:                                return "unknown";
+    case AudioSemanticState::SILENCE:       return "Silence";
+    case AudioSemanticState::AMBIENT_NOISE: return "Ambient Noise";
+    case AudioSemanticState::MUSIC:         return "Music";
+    default:                                return "Unknown";
   }
 }
 
 const char* AudioClassifier::getPhraseStateStr() const {
   switch (phraseState) {
-    case MusicPhrase::VERSE:     return "verse";
-    case MusicPhrase::INTRO:     return "intro";
-    case MusicPhrase::BUILDUP:   return "buildup";
-    case MusicPhrase::CHORUS:    return "chorus";
-    case MusicPhrase::BREAKDOWN: return "breakdown";
-    case MusicPhrase::OUTRO:     return "outro";
-    default:                     return "verse";
+    case MusicPhrase::VERSE:     return "Verse";
+    case MusicPhrase::INTRO:     return "Intro";
+    case MusicPhrase::BUILDUP:   return "Buildup";
+    case MusicPhrase::CHORUS:    return "Chorus";
+    case MusicPhrase::BREAKDOWN: return "Breakdown";
+    case MusicPhrase::OUTRO:     return "Outro";
+    default:                     return "Verse";
   }
 }
 

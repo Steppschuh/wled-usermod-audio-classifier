@@ -529,13 +529,15 @@ def main():
             last_report_sec = t_sec
             conf_bar = "█" * int(classifier.music_confidence * 5)
             bpm_str = f"{classifier.bpm} BPM" if classifier.bpm > 0 else "-- BPM"
+            state_disp = classifier.semantic_state.replace('_', ' ').title()
+            phrase_disp = classifier.phrase_state.title()
             print(
                 f"{format_duration(t_sec):<8} | "
                 f"{classifier.current_level:5.1f}% | "
                 f"{classifier.noise_floor:4.1f}% | "
                 f"{classifier.presence.upper():<8} | "
-                f"{classifier.semantic_state:<13} | "
-                f"{classifier.phrase_state:<9} | "
+                f"{state_disp:<13} | "
+                f"{phrase_disp:<9} | "
                 f"{classifier.music_confidence:4.2f} {conf_bar:<5} | "
                 f"{bpm_str:<7} | "
                 f"{len(classifier.beat_times):<6}"

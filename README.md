@@ -171,11 +171,11 @@ Topics derive from WLED's configured MQTT Device Topic (`wled/<mac>`):
 | `<device>/audio/level` | Float (`24.5`) | 1 Hz + Heartbeat | 1-second RMS average sound percentage |
 | `<device>/audio/peak` | Float (`45.2`) | 1 Hz + Heartbeat | 1-second maximum sound peak percentage |
 | `<device>/audio/detected` | `ON` / `OFF` | On change + Heartbeat | Debounced sound presence (also mirrored to `audio/sound`) |
-| `<device>/audio/type` | String (`silence`, `ambient_noise`, `music`) | On change + Heartbeat | Semantic acoustic type (also mirrored to `audio/state`) |
+| `<device>/audio/type` | String (`Silence`, `Ambient Noise`, `Music`) | On change + Heartbeat | Semantic acoustic type (also mirrored to `audio/state`) |
 | `<device>/audio/energy` | Integer (`0` – `100 %`) | 1 Hz + On change + Heartbeat | Track acoustic energy percentage |
 | `<device>/audio/bpm` | Integer (`128`) | 1 Hz + On change + Heartbeat | Detected rhythm speed (BPM) |
-| `<device>/audio/beat_probability` | Float (`0.00` – `1.00`) | 1 Hz + Heartbeat | Beat presence probability based on low-frequency variance |
-| `<device>/audio/phrase` | String (`intro`, `verse`, `buildup`, `chorus`, `breakdown`, `outro`) | On change + Heartbeat | Phrasing state (if enabled) |
+| `<device>/audio/beat_probability` | Float (`0.0%` – `100.0%`) | 1 Hz + Heartbeat | Beat presence probability based on low-frequency variance |
+| `<device>/audio/phrase` | String (`Intro`, `Verse`, `Buildup`, `Chorus`, `Breakdown`, `Outro`) | On change + Heartbeat | Phrasing state (if enabled) |
 | `<device>/audio/status` | String (diagnostic message) | On change + Heartbeat | AudioReactive coupling state |
 
 - **Availability**: Tracked automatically via `<device>/status` (`online` / `offline`).
