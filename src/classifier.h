@@ -31,6 +31,7 @@ struct ClassifierConfig {
   uint32_t onDelayMs = 1200;              // Required sustain to trigger SOUND state
   uint32_t offDelayMs = 8000;             // Required sustain to return to QUIET state
   bool experimentalEnabled = false;       // Enable experimental music & phrase detection
+  uint32_t musicHoldMs = 30000;           // Hold music state for up to 30s during breakdowns/quiet sections
 };
 
 class AudioClassifier {
@@ -95,6 +96,8 @@ private:
   MusicPhrase phraseState = MusicPhrase::STEADY;
   float musicConfidence = 0.0f;
   uint32_t lastPhraseChangeMs = 0;
+  uint32_t lastMusicEvidenceTime = 0;
+  uint32_t lastFrameTimeMs = 0;
 
   // Beat Tracking Memory
   static constexpr size_t MAX_BEATS = 16;

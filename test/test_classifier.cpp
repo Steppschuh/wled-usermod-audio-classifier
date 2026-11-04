@@ -173,6 +173,78 @@ void test_experimental_beat_and_phrasing(void) {
   TEST_ASSERT_TRUE(classifier.getMusicConfidence() >= 0.6f);
 }
 
+void test_music_hangover_persists_across_breakdown(void) {
+  // Test case for user requirement:
+  // When music transitions into a low-volume breakdown/buildup without bass/percussion,
+  // it must stay in the music state for the 30s hangover duration and not flap to ambient_noise.
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.onDelayMs = 500;
+  cfg.offDelayMs = 8000;
+  cfg.quietThresholdPercent = 6.0f;
+  cfg.musicHoldMs = 30000; // 30 seconds
+  AudioClassifier classifier(cfg);
+
+  AudioFrame frame;
+  // 1. Initial 10s of steady music with strong bass and 120 BPM beat
+  uint32_t lastBeat = 0;
+  for (uint32_t t = 0; t <= 10000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 40.0f;
+    frame.bands[0] = 130;
+    frame.bands[1] = 110;
+    frame.bands[8] = 40;
+    if (t - lastBeat >= 500) {
+      frame.isPeak = true;
+      lastBeat = t;
+    } else {
+      frame.isPeak = false;
+    }
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_EQUAL_STRING("music", classifier.getSemanticStateStr());
+
+  // 2. 25-second breakdown: bass drops completely out, no beat peaks, quiet ambient synth/vocal
+  // Even with low volume and zero beat peaks, semanticState MUST NOT flap to ambient_noise!
+  bool sawBreakdownPhrase = false;
+  for (uint32_t t = 10020; t <= 35000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 14.0f; // low energy breakdown
+    frame.bands[0] = 5;         // no bass
+    frame.bands[1] = 5;
+    frame.bands[8] = 20;        // subtle mids
+    frame.isPeak = false;       // no beat peak
+    classifier.processFrame(frame);
+
+    if (classifier.getPhraseState() == MusicPhrase::BREAKDOWN) {
+      sawBreakdownPhrase = true;
+    }
+
+    // At every frame within the 30s window, state must strictly remain "music"!
+    if (classifier.getSemanticState() != AudioSemanticState::MUSIC) {
+      TEST_FAIL_MESSAGE("Classifier flapped away from music during a 25s breakdown!");
+    }
+  }
+
+  // Confirm state is still music at second 35 (25s into breakdown)
+  TEST_ASSERT_EQUAL_STRING("music", classifier.getSemanticStateStr());
+  TEST_ASSERT_TRUE(sawBreakdownPhrase);
+
+  // 3. After full 30s hold expires (> 10000 + 30000 = 40000ms), and continued ambient non-music:
+  // Ambient noise has flat spectrum across 16 bands (bassRatio = 4/16 = 0.25)
+  for (size_t i = 0; i < NUM_AUDIO_BANDS; i++) frame.bands[i] = 8;
+  frame.isPeak = false;
+
+  for (uint32_t t = 35020; t <= 45000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 14.0f; // still some sound (so presence is sound)
+    classifier.processFrame(frame);
+  }
+
+  // Now, since 35 seconds of non-musical sound passed (> 30s hold), it cleanly decays to ambient_noise
+  TEST_ASSERT_EQUAL_STRING("ambient_noise", classifier.getSemanticStateStr());
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_initial_state_is_quiet_and_silence);
@@ -181,5 +253,6 @@ int main(int argc, char **argv) {
   RUN_TEST(test_continuous_music_does_not_swallow_itself);
   RUN_TEST(test_short_pause_does_not_flap_presence);
   RUN_TEST(test_experimental_beat_and_phrasing);
+  RUN_TEST(test_music_hangover_persists_across_breakdown);
   return UNITY_END();
 }

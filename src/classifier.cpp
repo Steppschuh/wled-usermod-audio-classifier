@@ -33,6 +33,8 @@ void AudioClassifier::reset() {
   phraseState = MusicPhrase::STEADY;
   musicConfidence = 0.0f;
   lastPhraseChangeMs = 0;
+  lastMusicEvidenceTime = 0;
+  lastFrameTimeMs = 0;
 
   for (size_t i = 0; i < MAX_BEATS; i++) beatTimes[i] = 0;
   beatIdx = 0;
@@ -92,9 +94,14 @@ void AudioClassifier::processFrame(const AudioFrame& frame) {
 
   // 5. Experimental semantic classification & phrasing
   if (presence == SoundPresence::QUIET) {
-    semanticState = AudioSemanticState::SILENCE;
-    phraseState = MusicPhrase::STEADY;
-    musicConfidence = 0.0f;
+    bool hangoverActive = (lastMusicEvidenceTime > 0 && (now - lastMusicEvidenceTime <= config.musicHoldMs));
+    if (!hangoverActive) {
+      semanticState = AudioSemanticState::SILENCE;
+      phraseState = MusicPhrase::STEADY;
+      musicConfidence = 0.0f;
+    } else {
+      updateMusicAndPhrasing(frame);
+    }
   } else {
     updateMusicAndPhrasing(frame);
   }
@@ -254,13 +261,53 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
 
   float bassRatio = (totalBandEnergy > 5.0f) ? (bassEnergy / totalBandEnergy) : 0.0f;
 
-  // 3. Classify Music vs Ambient Noise
-  if (beatRegularity > 0.50f || (bassRatio > 0.35f && currentLevel > (noiseFloor + 8.0f))) {
-    semanticState = AudioSemanticState::MUSIC;
-    musicConfidence = fmaxf(beatRegularity, 0.70f);
+  // 3. Classify Music vs Ambient Noise with Leaky Integrator, Hangover Timer & Hysteresis
+  bool hasMusicalEvidence = false;
+  float instantConfidence = 0.0f;
+
+  if (beatRegularity > 0.50f) {
+    hasMusicalEvidence = true;
+    instantConfidence = beatRegularity;
+  } else if (bassRatio > 0.35f && currentLevel > (noiseFloor + 5.0f)) {
+    hasMusicalEvidence = true;
+    instantConfidence = 0.75f;
+  }
+
+  // Update confidence score with asymmetrical attack/release
+  if (hasMusicalEvidence) {
+    lastMusicEvidenceTime = now;
+    // Fast attack: smoothly elevate confidence towards target
+    musicConfidence = (musicConfidence * 0.85f) + (instantConfidence * 0.15f);
+    if (musicConfidence > 1.0f) musicConfidence = 1.0f;
   } else {
-    semanticState = AudioSemanticState::AMBIENT_NOISE;
-    musicConfidence = 0.20f;
+    // Slow release: confidence decays gradually over ~30s
+    musicConfidence *= 0.999f;
+  }
+
+  // State machine transition with configurable hangover protection
+  if (semanticState == AudioSemanticState::MUSIC) {
+    bool hangoverActive = (lastMusicEvidenceTime > 0 && (now - lastMusicEvidenceTime <= config.musicHoldMs));
+    if (!hangoverActive) {
+      // Hold period expired: transition back down
+      if (presence == SoundPresence::SOUND) {
+        semanticState = AudioSemanticState::AMBIENT_NOISE;
+      } else {
+        semanticState = AudioSemanticState::SILENCE;
+      }
+      phraseState = MusicPhrase::STEADY;
+    }
+    // Otherwise, remain locked in MUSIC state (even during low-volume breakdowns/buildups)
+  } else {
+    // In SILENCE or AMBIENT_NOISE: require confidence > 0.60 to enter MUSIC
+    if (musicConfidence >= 0.60f || (beatRegularity >= 0.70f && currentLevel > noiseFloor + 5.0f)) {
+      semanticState = AudioSemanticState::MUSIC;
+      lastMusicEvidenceTime = now;
+      if (musicConfidence < 0.70f) musicConfidence = 0.70f;
+    } else if (presence == SoundPresence::SOUND) {
+      semanticState = AudioSemanticState::AMBIENT_NOISE;
+    } else {
+      semanticState = AudioSemanticState::SILENCE;
+    }
   }
 
   // 4. Phrasing State Machine (only evaluated when music is active)
@@ -275,9 +322,9 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     if (now - lastPhraseChangeMs >= 4000) {
       MusicPhrase prevPhrase = phraseState;
 
-      if (bassTrend < 0.45f) {
+      if (bassTrend < 0.45f || (bassRatio < 0.15f && currentLevel > noiseFloor + 2.0f)) {
         phraseState = MusicPhrase::BREAKDOWN;
-      } else if (prevPhrase == MusicPhrase::BREAKDOWN && bassTrend > 1.6f) {
+      } else if (prevPhrase == MusicPhrase::BREAKDOWN && bassTrend > 1.5f) {
         phraseState = MusicPhrase::DROP;
       } else if (bassTrend > 1.25f) {
         phraseState = MusicPhrase::BUILDUP;

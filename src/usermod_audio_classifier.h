@@ -24,10 +24,14 @@ private:
   static const char _onDelay[];
   static const char _offDelay[];
   static const char _experimental[];
+  static const char _musicHold[];
+  static const char _streamRaw[];
 
   bool enabled = true;
   bool haDiscoveryEnabled = true;
   bool experimentalEnabled = false;
+  bool rawStreamEnabled = false;
+  uint32_t lastRawStreamMs = 0;
 
   ClassifierConfig config;
   AudioReactiveSource arSource;
@@ -36,12 +40,17 @@ private:
   bool initDone = false;
   bool discoveryPublished = false;
 
+#ifndef WLED_DISABLE_MQTT
+  void publishRawFrame(const AudioFrame& frame);
+#endif
+
 public:
   void setup() override;
   void loop() override;
 
 #ifndef WLED_DISABLE_MQTT
   void onMqttConnect(bool sessionPresent) override;
+  bool onMqttMessage(char* topic, char* payload) override;
 #endif
 
   void addToJsonInfo(JsonObject& root) override;

@@ -17,6 +17,8 @@ const char AudioClassifierUsermod::_marginFloor[]    PROGMEM = "margin-above-flo
 const char AudioClassifierUsermod::_onDelay[]        PROGMEM = "on-delay-ms";
 const char AudioClassifierUsermod::_offDelay[]       PROGMEM = "off-delay-ms";
 const char AudioClassifierUsermod::_experimental[]   PROGMEM = "experimental-music";
+const char AudioClassifierUsermod::_musicHold[]      PROGMEM = "music-hold-ms";
+const char AudioClassifierUsermod::_streamRaw[]      PROGMEM = "stream-raw";
 
 void AudioClassifierUsermod::setup() {
   arSource.init();
@@ -30,6 +32,13 @@ void AudioClassifierUsermod::loop() {
   AudioFrame frame;
   if (arSource.pollFrame(frame)) {
     classifier.processFrame(frame);
+
+#ifndef WLED_DISABLE_MQTT
+    if (rawStreamEnabled && WLED_MQTT_CONNECTED && (millis() - lastRawStreamMs >= 40)) {
+      lastRawStreamMs = millis();
+      publishRawFrame(frame);
+    }
+#endif
   }
 
 #ifndef WLED_DISABLE_MQTT
@@ -51,6 +60,43 @@ void AudioClassifierUsermod::onMqttConnect(bool sessionPresent) {
     HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, true);
     discoveryPublished = true;
   }
+
+  // Subscribe to raw stream command topic: wled/<device>/audio/stream
+  if (mqtt != nullptr) {
+    String subTopic = HomeAssistantAudioDiscovery::getBaseTopic() + "stream";
+    mqtt->subscribe(subTopic.c_str(), 0);
+  }
+}
+
+bool AudioClassifierUsermod::onMqttMessage(char* topic, char* payload) {
+  if (strstr(topic, "/audio/stream") != nullptr || strstr(topic, "audio/stream") != nullptr) {
+    if (strcmp(payload, "ON") == 0 || strcmp(payload, "1") == 0 || strcmp(payload, "true") == 0) {
+      rawStreamEnabled = true;
+    } else {
+      rawStreamEnabled = false;
+    }
+    return true;
+  }
+  return false;
+}
+
+void AudioClassifierUsermod::publishRawFrame(const AudioFrame& frame) {
+  String topic = HomeAssistantAudioDiscovery::getBaseTopic() + "raw";
+  String payload = "{\"t\":" + String(frame.timestampMs) +
+                   ",\"lvl\":" + String(frame.levelPercent, 1) +
+                   ",\"raw\":" + String((int)frame.rawVolume) +
+                   ",\"smth\":" + String(frame.smoothedVolume, 1) +
+                   ",\"pk\":" + String(frame.isPeak ? 1 : 0) +
+                   ",\"hz\":" + String(frame.majorPeakHz, 1) +
+                   ",\"mag\":" + String(frame.peakMagnitude, 1) +
+                   ",\"bands\":[";
+  for (size_t i = 0; i < NUM_AUDIO_BANDS; i++) {
+    payload += String(frame.bands[i]);
+    if (i < NUM_AUDIO_BANDS - 1) payload += ",";
+  }
+  payload += "]}";
+
+  mqtt->publish(topic.c_str(), 0, false, payload.c_str());
 }
 #endif
 
@@ -87,6 +133,8 @@ void AudioClassifierUsermod::addToConfig(JsonObject& root) {
   top[FPSTR(_marginFloor)] = config.marginAboveFloorPercent;
   top[FPSTR(_onDelay)] = config.onDelayMs;
   top[FPSTR(_offDelay)] = config.offDelayMs;
+  top[FPSTR(_musicHold)] = config.musicHoldMs;
+  top[FPSTR(_streamRaw)] = rawStreamEnabled;
 }
 
 bool AudioClassifierUsermod::readFromConfig(JsonObject& root) {
@@ -106,6 +154,8 @@ bool AudioClassifierUsermod::readFromConfig(JsonObject& root) {
   config.marginAboveFloorPercent = top[FPSTR(_marginFloor)] | config.marginAboveFloorPercent;
   config.onDelayMs = top[FPSTR(_onDelay)] | config.onDelayMs;
   config.offDelayMs = top[FPSTR(_offDelay)] | config.offDelayMs;
+  config.musicHoldMs = top[FPSTR(_musicHold)] | config.musicHoldMs;
+  rawStreamEnabled = top[FPSTR(_streamRaw)] | rawStreamEnabled;
   config.experimentalEnabled = experimentalEnabled;
 
   classifier.setConfig(config);
@@ -129,7 +179,9 @@ void AudioClassifierUsermod::appendConfigData() {
   oappend(SET_F("addInfo('AudioClassifier:quiet-threshold-percent', 1, 'Relative noise floor % cutoff');"));
   oappend(SET_F("addInfo('AudioClassifier:on-delay-ms', 1, 'Debounce time to detect sound (ms)');"));
   oappend(SET_F("addInfo('AudioClassifier:off-delay-ms', 1, 'Debounce time to return to quiet (ms)');"));
+  oappend(SET_F("addInfo('AudioClassifier:music-hold-ms', 1, 'Hold time in music state during breakdowns/quiet passages (ms)');"));
   oappend(SET_F("addInfo('AudioClassifier:experimental-music', 1, 'Enable experimental music & phrase detection');"));
+  oappend(SET_F("addInfo('AudioClassifier:stream-raw', 1, 'Stream raw audio frames over MQTT for recording');"));
 }
 
 // Register usermod dynamically in WLED
