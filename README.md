@@ -35,8 +35,8 @@ When MQTT is connected, the following entities appear automatically under your W
 
 | Entity Name | Domain | Type | Values / Unit | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| **`Audio Level`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second RMS average sound volume (updated at 1 Hz). |
-| **`Peak Level`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second maximum sound peak (updated at 1 Hz). |
+| **`Audio Level RMS`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second RMS average sound volume (updated at 1 Hz). |
+| **`Audio Level Peak`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second maximum sound peak (updated at 1 Hz). |
 | **`Audio Detected`** | `binary_sensor` | `sound` | `ON` / `OFF` | Debounced presence indicator for active sound in the room. |
 | **`Audio Type`** | `sensor` | `enum` | `silence`, `ambient_noise`, `music` | Contextual room acoustic state. |
 | **`Music Energy`** | `sensor` | Measurement | `0` – `100 %` | Dynamic track & acoustic energy level (0%: silence, 10%: noise, 30%: outro, 40%: breakdown, 50%: buildup, 60%: intro, 80%: verse, 100%: chorus). |

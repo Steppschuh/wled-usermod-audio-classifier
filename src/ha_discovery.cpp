@@ -41,6 +41,8 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
   };
 
   // Clear legacy discovery topics to avoid orphaned entities in HA
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_level/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_peak_level/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_peak/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_state/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_phrase/config").c_str(), 0, true, "");
@@ -54,12 +56,12 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #else
     StaticJsonDocument<640> doc;
 #endif
-    doc["name"] = "Audio Level";
+    doc["name"] = "Audio Level RMS";
     doc["stat_t"] = baseTopic + "level";
     doc["unit_of_meas"] = "%";
     doc["stat_cla"] = "measurement";
     doc["icon"] = "mdi:volume-high";
-    doc["uniq_id"] = chipId + "_audio_level";
+    doc["uniq_id"] = chipId + "_audio_level_rms";
     doc["avty_t"] = statusTopic;
     doc["pl_avail"] = "online";
     doc["pl_not_avail"] = "offline";
@@ -68,7 +70,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     JsonObject dev = doc.createNestedObject("dev");
     buildDevice(dev);
 
-    String topic = "homeassistant/sensor/" + chipId + "_audio_level/config";
+    String topic = "homeassistant/sensor/" + chipId + "_audio_level_rms/config";
     String payload;
     serializeJson(doc, payload);
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
@@ -81,12 +83,12 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #else
     StaticJsonDocument<640> doc;
 #endif
-    doc["name"] = "Peak Level";
+    doc["name"] = "Audio Level Peak";
     doc["stat_t"] = baseTopic + "peak";
     doc["unit_of_meas"] = "%";
     doc["stat_cla"] = "measurement";
     doc["icon"] = "mdi:volume-vibrate";
-    doc["uniq_id"] = chipId + "_peak_level";
+    doc["uniq_id"] = chipId + "_audio_level_peak";
     doc["avty_t"] = statusTopic;
     doc["pl_avail"] = "online";
     doc["pl_not_avail"] = "offline";
@@ -95,7 +97,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     JsonObject dev = doc.createNestedObject("dev");
     buildDevice(dev);
 
-    String topic = "homeassistant/sensor/" + chipId + "_peak_level/config";
+    String topic = "homeassistant/sensor/" + chipId + "_audio_level_peak/config";
     String payload;
     serializeJson(doc, payload);
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
@@ -298,6 +300,8 @@ void HomeAssistantAudioDiscovery::removeDiscovery(bool experimentalEnabled) {
   if (!WLED_MQTT_CONNECTED) return;
   String chipId = String(escapedMac);
 
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_level_rms/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_level_peak/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_level/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_peak_level/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_peak/config").c_str(), 0, true, "");

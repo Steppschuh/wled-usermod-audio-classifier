@@ -81,6 +81,13 @@ void AudioClassifier::reset() {
   prevBassEnergy = 0.0f;
   shortBassEnergy = 0.0f;
   longBassEnergy = 0.0f;
+
+  tentativePrevEnergy = SoundEnergy::SILENCE;
+  tentativePrevPhrase = MusicPhrase::VERSE;
+  tentativePrevPhraseStartMs = 0;
+  tentativeTransitionMs = 0;
+  isTentativeTransition = false;
+  tentativeBeatsSeen = 0;
 }
 
 void AudioClassifier::setConfig(const ClassifierConfig& newConfig) {
@@ -653,12 +660,76 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
 
   // 9. Phrasing & SoundEnergy State Machine (Rave-Totem Algorithm)
   if (semanticState == AudioSemanticState::MUSIC) {
+    SoundEnergy energyBeforeUpdate = soundEnergy;
+    MusicPhrase phraseBeforeUpdate = phraseState;
+
     shortBassEnergy = (shortBassEnergy * 0.92f) + (bassEnergy * 0.08f);
     longBassEnergy = (longBassEnergy * 0.99f) + (bassEnergy * 0.01f);
     float bassTrend = (longBassEnergy > 2.0f) ? (shortBassEnergy / longBassEnergy) : 1.0f;
 
     uint32_t phraseDur = (durationBetweenPhrases > 0) ? durationBetweenPhrases : 16000;
     uint32_t barDur = (durationBetweenBars > 0) ? durationBetweenBars : 2000;
+    uint32_t beatDur = (durationBetweenBeats > 0) ? durationBetweenBeats : 500;
+    uint32_t outlierWindowMs = (barDur > 0) ? (barDur + beatDur) : 2500;
+    if (outlierWindowMs < 1500) outlierWindowMs = 1500;
+    if (outlierWindowMs > 3500) outlierWindowMs = 3500;
+
+    // Outlier Detection & Revert Evaluation:
+    // If we just recently transitioned into a new phrase within 1-2 beats / ~1 bar,
+    // evaluate whether the switch was caused by a momentary outlier (e.g. 1 soft bass hit
+    // before the actual drop, or 1-2 beats missing in bar 8 for tension).
+    if (isTentativeTransition) {
+      uint32_t dtTentative = (now >= tentativeTransitionMs) ? (now - tentativeTransitionMs) : 0;
+      if (beatDetected) {
+        tentativeBeatsSeen++;
+      }
+
+      if (dtTentative > outlierWindowMs) {
+        // Tentative observation window elapsed without being an outlier -> confirmed!
+        isTentativeTransition = false;
+      } else {
+        // Case 1: Premature Upward Bump (e.g. switched to CHORUS or VERSE on 1 isolated hit)
+        if (soundEnergy >= SoundEnergy::VERSE && tentativePrevEnergy < SoundEnergy::VERSE) {
+          if (tentativeBeatsSeen >= 2 || (peak1sLevel >= 48.0f && bassBuffer.mean >= 20.0f)) {
+            // Sustained consecutive beats or strong drop energy confirmed the transition!
+            isTentativeTransition = false;
+          } else {
+            // Check if no follow-up beat arrived after 2 beats, and sustained energy collapsed back
+            uint32_t gapSinceBeat = (lastBeatTimestamp > 0) ? (now - lastBeatTimestamp) : dtTentative;
+            bool noFollowupBeat = (gapSinceBeat >= (uint32_t)(beatDur * 2.2f));
+            bool energyDropped = (peak1sLevel < 42.0f && bassBuffer.mean < 15.0f);
+
+            if (noFollowupBeat && energyDropped) {
+              // Revert to previous phrase (e.g. BUILDUP) without applying the 8-bar chorus constraint!
+              soundEnergy = tentativePrevEnergy;
+              phraseState = tentativePrevPhrase;
+              lastPhraseChangeMs = tentativePrevPhraseStartMs;
+              lastExpectedPhraseStart = tentativePrevPhraseStartMs;
+              lastEnergyUpdateTime = now;
+              isTentativeTransition = false;
+              energyBeforeUpdate = soundEnergy;
+              phraseBeforeUpdate = phraseState;
+            }
+          }
+        }
+        // Case 2: Premature Downward Drop (e.g. dropped from CHORUS or VERSE due to 1-2 missing beats in bar 8)
+        else if (soundEnergy < tentativePrevEnergy && tentativePrevEnergy >= SoundEnergy::VERSE) {
+          // If a beat with bass resumes within the tentative window, it was just 1-2 missing beats in bar 8!
+          bool bassResumed = (hasBass || bassRatio >= 0.25f || peak1sLevel >= 40.0f);
+          if (beatDetected && bassResumed) {
+            // Revert back to previous phrase (e.g. CHORUS or VERSE) and preserve phrase continuity!
+            soundEnergy = tentativePrevEnergy;
+            phraseState = tentativePrevPhrase;
+            lastPhraseChangeMs = tentativePrevPhraseStartMs;
+            lastExpectedPhraseStart = tentativePrevPhraseStartMs;
+            lastEnergyUpdateTime = now;
+            isTentativeTransition = false;
+            energyBeforeUpdate = soundEnergy;
+            phraseBeforeUpdate = phraseState;
+          }
+        }
+      }
+    }
 
     uint32_t timeSincePhraseChange = (lastPhraseChangeMs > 0 && now >= lastPhraseChangeMs)
                                      ? (now - lastPhraseChangeMs)
@@ -683,7 +754,8 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     } else if (barsWithoutBeats <= 2 && (constantBeats || beatInLastBar || bassRatio > 0.25f)) {
       if (soundEnergy == SoundEnergy::CHORUS) {
         // User rule: If switched to chorus, do NOT change back to verse for at least 8 bars (durationBetweenPhrases / 32 beats)
-        if (timeSincePhraseChange < phraseDur) {
+        // If this transition is tentative (evaluating outlier), do not lock in 8 bars yet!
+        if (!isTentativeTransition && timeSincePhraseChange < phraseDur) {
           updatedEnergy = SoundEnergy::CHORUS;
         } else if (nearPhraseBoundary && (!dropInLastPhrase || bassTrend < 0.90f) && (peak1sLevel < 52.0f)) {
           updatedEnergy = SoundEnergy::VERSE;
@@ -707,19 +779,20 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       }
     }
 
-    if (now - lastEnergyUpdateTime >= 1000) {
+    bool immediateBeatTransition = beatDetected && (updatedEnergy != soundEnergy);
+    if ((now - lastEnergyUpdateTime >= 1000) || immediateBeatTransition) {
       if (updatedEnergy > soundEnergy) {
         if (soundEnergy == SoundEnergy::OUTRO) {
-          if (dropInLastPhrase) soundEnergy = SoundEnergy::CHORUS;
+          if (dropInLastPhrase || peak1sLevel >= 52.0f) soundEnergy = SoundEnergy::CHORUS;
           else if (barsSinceEnergyUpdate >= 2) soundEnergy = SoundEnergy::VERSE;
         } else if (soundEnergy == SoundEnergy::INTRO) {
-          if (dropInLastPhrase) soundEnergy = SoundEnergy::CHORUS;
+          if (dropInLastPhrase || peak1sLevel >= 52.0f) soundEnergy = SoundEnergy::CHORUS;
           else if (barsSinceEnergyUpdate >= 2) soundEnergy = SoundEnergy::VERSE;
         } else if (soundEnergy == SoundEnergy::VERSE) {
-          if (dropInLastPhrase) soundEnergy = SoundEnergy::CHORUS;
+          if (dropInLastPhrase || peak1sLevel >= 52.0f) soundEnergy = SoundEnergy::CHORUS;
           else if (bassTrend > 1.25f) soundEnergy = SoundEnergy::BUILDUP;
         } else if (soundEnergy == SoundEnergy::BUILDUP) {
-          if (dropInLastPhrase || (bassTrend > 1.4f && (beatInLastBar || beatDetected))) {
+          if (dropInLastPhrase || (bassTrend > 1.4f && (beatInLastBar || beatDetected)) || peak1sLevel >= 52.0f) {
             soundEnergy = SoundEnergy::CHORUS;
           }
         } else {
@@ -728,7 +801,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
         lastEnergyUpdateTime = now;
       } else if (updatedEnergy < soundEnergy) {
         if (soundEnergy == SoundEnergy::CHORUS) {
-          if (timeSincePhraseChange < phraseDur) {
+          if (!isTentativeTransition && timeSincePhraseChange < phraseDur) {
             // Chorus locked for at least 8 bars (durationBetweenPhrases).
             // Only allow transition down if audio dropped to breakdown level!
             if (updatedEnergy == SoundEnergy::BREAKDOWN || updatedEnergy == SoundEnergy::OUTRO) {
@@ -765,7 +838,6 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       }
     }
 
-    MusicPhrase prevPhrase = phraseState;
     switch (soundEnergy) {
       case SoundEnergy::CHORUS:    phraseState = MusicPhrase::CHORUS; break;
       case SoundEnergy::BUILDUP:   phraseState = MusicPhrase::BUILDUP; break;
@@ -775,12 +847,21 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       case SoundEnergy::VERSE:     phraseState = MusicPhrase::VERSE; break;
       default:                     phraseState = MusicPhrase::VERSE; break;
     }
-    if (phraseState != prevPhrase) {
+    if (phraseState != phraseBeforeUpdate) {
+      if (!isTentativeTransition) {
+        tentativePrevEnergy = energyBeforeUpdate;
+        tentativePrevPhrase = phraseBeforeUpdate;
+        tentativePrevPhraseStartMs = (lastPhraseChangeMs > 0) ? lastPhraseChangeMs : now;
+        tentativeTransitionMs = now;
+        isTentativeTransition = true;
+        tentativeBeatsSeen = beatDetected ? 1 : 0;
+      }
       lastPhraseChangeMs = now;
       lastExpectedPhraseStart = now;
     }
   } else {
     phraseState = MusicPhrase::VERSE;
+    isTentativeTransition = false;
   }
 
   // 10. Dedicated Music Beat Probability

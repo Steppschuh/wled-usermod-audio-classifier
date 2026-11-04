@@ -65,6 +65,12 @@ class SimulatedAudioClassifier:
         self.low_freq_buf = []
         self.beat_probability = 0.0
 
+        self.tentative_prev_phrase = "steady"
+        self.tentative_prev_change_ms = 0
+        self.tentative_transition_ms = 0
+        self.is_tentative = False
+        self.tentative_beats_seen = 0
+
     def process_frame(self, t, lvl, raw, smth, pk, hz, mag, bands):
         # 1. Smooth instantaneous level
         self.current_level = (self.current_level * 0.7) + (lvl * 0.3)
@@ -274,9 +280,39 @@ class SimulatedAudioClassifier:
         if self.semantic_state == "music":
             time_in_phrase = (t - self.last_phrase_change) / 1000.0 if self.last_phrase_change > 0 else 999.0
             phrase_dur = (self.duration_between_beats * 32 / 1000.0) if self.duration_between_beats > 0 else 13.0
+            beat_dur = (self.duration_between_beats / 1000.0) if self.duration_between_beats > 0 else 0.5
+            bar_dur = beat_dur * 4.0
+            outlier_window = max(1.5, min(3.5, bar_dur + beat_dur))
 
+            # Outlier Detection & Revert Evaluation
+            if self.is_tentative:
+                dt_tentative = (t - self.tentative_transition_ms) / 1000.0 if self.tentative_transition_ms > 0 else 999.0
+                if is_beat:
+                    self.tentative_beats_seen += 1
+
+                if dt_tentative > outlier_window:
+                    self.is_tentative = False
+                else:
+                    # Upward outlier
+                    if self.phrase_state in ("chorus", "verse") and self.tentative_prev_phrase not in ("chorus", "verse"):
+                        if self.tentative_beats_seen >= 2 or (self.peak_1s_level >= 48.0 and self.current_level >= 25.0):
+                            self.is_tentative = False
+                        else:
+                            gap_since_beat = (t - self.last_beat_timestamp) / 1000.0 if self.last_beat_timestamp > 0 else dt_tentative
+                            if gap_since_beat >= (beat_dur * 2.2) and self.peak_1s_level < 42.0:
+                                self.phrase_state = self.tentative_prev_phrase
+                                self.last_phrase_change = self.tentative_prev_change_ms
+                                self.is_tentative = False
+                    # Downward outlier
+                    elif self.phrase_state not in ("chorus", "verse") and self.tentative_prev_phrase in ("chorus", "verse"):
+                        if is_beat and (has_bass or bass_ratio >= 0.25 or self.peak_1s_level >= 40.0):
+                            self.phrase_state = self.tentative_prev_phrase
+                            self.last_phrase_change = self.tentative_prev_change_ms
+                            self.is_tentative = False
+
+            prev_phrase_before = self.phrase_state
             if self.phrase_state == "chorus":
-                if time_in_phrase < phrase_dur:
+                if not self.is_tentative and time_in_phrase < phrase_dur:
                     # Locked in chorus unless complete volume drop
                     if self.current_level < (self.noise_floor + 2.0) and self.average_1s_level < (self.noise_floor + 3.0):
                         self.phrase_state = "breakdown"
@@ -310,8 +346,18 @@ class SimulatedAudioClassifier:
 
                 if self.phrase_state != prev_ph:
                     self.last_phrase_change = t
+
+            if self.phrase_state != prev_phrase_before:
+                if not self.is_tentative:
+                    self.tentative_prev_phrase = prev_phrase_before
+                    self.tentative_prev_change_ms = self.last_phrase_change if self.last_phrase_change > 0 else t
+                    self.tentative_transition_ms = t
+                    self.is_tentative = True
+                    self.tentative_beats_seen = 1 if is_beat else 0
+                self.last_phrase_change = t
         else:
             self.phrase_state = "steady"
+            self.is_tentative = False
 
         # 10. Music Beat Probability
         if self.presence == "quiet" or self.semantic_state != "music":

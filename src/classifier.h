@@ -236,4 +236,12 @@ private:
   float prevBassEnergy = 0.0f;
   float shortBassEnergy = 0.0f;
   float longBassEnergy = 0.0f;
+
+  // Outlier Detection & Revert Tracking
+  SoundEnergy tentativePrevEnergy = SoundEnergy::SILENCE;
+  MusicPhrase tentativePrevPhrase = MusicPhrase::VERSE;
+  uint32_t tentativePrevPhraseStartMs = 0;
+  uint32_t tentativeTransitionMs = 0;
+  bool isTentativeTransition = false;
+  uint8_t tentativeBeatsSeen = 0;
 };

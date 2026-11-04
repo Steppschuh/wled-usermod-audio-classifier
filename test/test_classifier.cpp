@@ -488,6 +488,126 @@ void test_recorded_session_beat_probability(void) {
   TEST_ASSERT_TRUE(ok);
 }
 
+void test_outlier_soft_bass_hit_before_drop_reverts(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  AudioClassifier classifier(cfg);
+  AudioFrame frame;
+
+  // 1. Establish music presence with steady groove for 3 seconds
+  uint32_t lastBeat = 0;
+  for (uint32_t t = 0; t <= 3000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 35.0f;
+    frame.rawVolume = 85.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 20;
+    if (t - lastBeat >= 500) {
+      frame.isPeak = true;
+      frame.bands[0] = 120;
+      frame.bands[1] = 100;
+      lastBeat = t;
+    } else {
+      frame.isPeak = false;
+    }
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_EQUAL_STRING("music", classifier.getSemanticStateStr());
+
+  // 2. Transition into a buildup riser for 4 seconds (mids/highs rise, kick stops)
+  for (uint32_t t = 3020; t <= 7000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 25.0f;
+    frame.rawVolume = 65.0f;
+    frame.isPeak = false;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = (b >= 4) ? 80 : 10;
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_EQUAL_STRING("music", classifier.getSemanticStateStr());
+
+  // 3. Simulate 1 premature soft bass hit (outlier 1 bar before drop)
+  frame.timestampMs = 7020;
+  frame.levelPercent = 35.0f;
+  frame.rawVolume = 90.0f;
+  frame.isPeak = true;
+  frame.bands[0] = 70;
+  frame.bands[1] = 60;
+  classifier.processFrame(frame);
+
+  // 4. For the next 1400ms (~2-3 beats at 120 BPM), no second beat arrives and energy remains at buildup level
+  for (uint32_t t = 7040; t <= 8500; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 20.0f;
+    frame.rawVolume = 50.0f;
+    frame.isPeak = false;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = (b >= 4) ? 80 : 10;
+    classifier.processFrame(frame);
+  }
+
+  // The isolated hit must be recognized as an outlier and reverted back to non-chorus (buildup/intro/breakdown)
+  // and the 8-bar chorus lock must NOT keep it in chorus!
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(100, classifier.getSoundEnergy(), "Should not be locked in chorus after single outlier hit");
+}
+
+void test_outlier_missing_beat_in_phrase_reverts(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  AudioClassifier classifier(cfg);
+  AudioFrame frame;
+
+  // 1. Establish strong driving 120 BPM chorus groove for 6 seconds
+  uint32_t lastBeat = 0;
+  for (uint32_t t = 0; t <= 6000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 55.0f;
+    frame.rawVolume = 140.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 30;
+
+    if (t - lastBeat >= 500) {
+      frame.isPeak = true;
+      frame.bands[0] = 160;
+      frame.bands[1] = 140;
+      lastBeat = t;
+    } else {
+      frame.isPeak = false;
+    }
+    classifier.processFrame(frame);
+  }
+
+  TEST_ASSERT_EQUAL_STRING("chorus", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_UINT8(100, classifier.getSoundEnergy());
+
+  // 2. Simulate 2 missing beats (tension gap in bar 8, kick drum muted for 800ms)
+  for (uint32_t t = 6020; t <= 6800; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 25.0f;
+    frame.rawVolume = 60.0f;
+    frame.isPeak = false;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = (b >= 4) ? 50 : 10;
+    classifier.processFrame(frame);
+  }
+
+  // 3. Beat resumes immediately on beat 1 with full bass
+  for (uint32_t t = 6820; t <= 7500; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 55.0f;
+    frame.rawVolume = 140.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 30;
+
+    if (t == 6820 || t == 7320) {
+      frame.isPeak = true;
+      frame.bands[0] = 160;
+      frame.bands[1] = 140;
+    } else {
+      frame.isPeak = false;
+    }
+    classifier.processFrame(frame);
+  }
+
+  // The 2 missing beats must be recognized as an outlier gap and reverted back to chorus!
+  TEST_ASSERT_EQUAL_STRING("chorus", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_UINT8(100, classifier.getSoundEnergy());
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_initial_state_is_quiet_and_silence);
@@ -505,5 +625,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_1s_average_and_peak_tracking);
   RUN_TEST(test_music_beat_probability);
   RUN_TEST(test_recorded_session_beat_probability);
+  RUN_TEST(test_outlier_soft_bass_hit_before_drop_reverts);
+  RUN_TEST(test_outlier_missing_beat_in_phrase_reverts);
   return UNITY_END();
 }
