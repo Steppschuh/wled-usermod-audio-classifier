@@ -459,6 +459,33 @@ void test_music_beat_probability(void) {
 
   // Active kicks with variance -> beat probability must be high (> 0.8)
   TEST_ASSERT_TRUE(classifier.getBeatProbability() >= 0.80f);
+
+  // 4. Mids appearing without bass (e.g. vocals/guitars in bridge/intro/outro)
+  // Low frequencies bands 0 & 1 are 0, while mids are loud
+  for (uint32_t t = 10000; t < 15000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 50.0f;
+    frame.rawVolume = 120.0f;
+    frame.bands[0] = 5;
+    frame.bands[1] = 5;
+    for (size_t b = 4; b < 10; b++) {
+      frame.bands[b] = 160; // Loud mids
+    }
+    classifier.processFrame(frame);
+  }
+  // Mids without bass -> beat probability MUST be low (<= 0.15)
+  TEST_ASSERT_TRUE(classifier.getBeatProbability() <= 0.15f);
+}
+
+void test_recorded_session_beat_probability(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.musicHoldMs = 30000;
+  AudioClassifier classifier(cfg);
+
+  // Replay 3-minute recording with beat probability assertions
+  bool ok = FixtureReplayer::replayAndVerify("test/fixtures/session_20261104_113800.json", classifier);
+  TEST_ASSERT_TRUE(ok);
 }
 
 int main(int argc, char **argv) {
@@ -477,5 +504,6 @@ int main(int argc, char **argv) {
   RUN_TEST(test_replay_recorded_3min_phrase_changes_session);
   RUN_TEST(test_1s_average_and_peak_tracking);
   RUN_TEST(test_music_beat_probability);
+  RUN_TEST(test_recorded_session_beat_probability);
   return UNITY_END();
 }

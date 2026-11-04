@@ -328,16 +328,13 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
 
   // Snare/hi-hat suppression: if volume is low or bass is absent, reject non-beat transients
   float effRawVol = (frame.rawVolume > 0.0f) ? frame.rawVolume : (frame.levelPercent * 2.55f);
-  if (effRawVol < 50.0f || (frame.bands[0] < 40 && frame.bands[1] < 40)) {
-    beatFeature *= 0.20f;
-  }
-  // If spread is large (mid-range spike) but bass ratio is low, suppress snare/clap
-  if (spread > bassPercent * 1.2f && bassRatio < 0.30f) {
-    beatFeature *= 0.25f;
-  }
+  bool hasBass = (frame.bands[0] >= 40 || frame.bands[1] >= 40) && (bassRatio >= 0.30f);
 
-  // Peak boost only for legitimate bass frequencies (< 150 Hz)
-  if (frame.isPeak && bassRatio >= 0.30f && (frame.majorPeakHz <= 140.0f || frame.majorPeakHz == 0.0f)) {
+  if (!hasBass || effRawVol < 50.0f) {
+    beatFeature *= 0.15f;
+  } else if (spread > bassPercent * 1.2f && bassRatio < 0.35f) {
+    beatFeature *= 0.25f;
+  } else if (frame.isPeak && (frame.majorPeakHz <= 140.0f || frame.majorPeakHz == 0.0f)) {
     if (beatFeature < 20.0f) beatFeature = 20.0f;
     else beatFeature *= 1.25f;
   }
@@ -395,7 +392,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     if (beatThresh < BEAT_THRESH_MIN) beatThresh = BEAT_THRESH_MIN;
   }
 
-  bool beatDetected = (beatFeature > beatThresh && enoughDelay);
+  bool beatDetected = hasBass && (beatFeature > beatThresh && enoughDelay);
 
   if (beatDetected) {
     beatTimes[beatIdx] = now;
@@ -789,37 +786,56 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   // 10. Dedicated Music Beat Probability
   if (presence == SoundPresence::QUIET || semanticState != AudioSemanticState::MUSIC) {
     beatProbability = 0.0f;
+  } else if (phraseState == MusicPhrase::INTRO || phraseState == MusicPhrase::BUILDUP ||
+             phraseState == MusicPhrase::BREAKDOWN || phraseState == MusicPhrase::OUTRO) {
+    // Inbetween sections: expect low beat probability (< 0.20)
+    beatProbability *= 0.70f;
+    if (beatProbability < 0.02f) beatProbability = 0.0f;
   } else {
-    // 1. Low frequency variance factor (0.0 if flat/steady/no variance, ramping to 1.0 when rhythmically fluctuating)
-    float varFactor = (lowFreqBuffer.stdDev - 4.0f) / 8.0f;
-    if (varFactor < 0.0f) varFactor = 0.0f;
-    if (varFactor > 1.0f) varFactor = 1.0f;
+    // VERSE or CHORUS: must have low-frequency variance
+    float span = lowFreqBuffer.maxVal - lowFreqBuffer.minVal;
+    float m = lowFreqBuffer.mean;
+    float stdDev = lowFreqBuffer.stdDev;
+    bool hasBassEnergy = (frame.bands[0] >= 35 || frame.bands[1] >= 35 || m >= 25.0f || span >= 40.0f);
 
-    // 2. Recent low-frequency beat onset factor
-    uint32_t dtBeat = (lastBeatTimestamp > 0) ? (now - lastBeatTimestamp) : 99999;
-    float recencyFactor = 0.0f;
-    if (dtBeat <= 1500) {
-      recencyFactor = 1.0f;
-    } else if (dtBeat <= 2500) {
-      recencyFactor = 1.0f - ((float)(dtBeat - 1500) / 1000.0f);
+    if (!hasBassEnergy || stdDev < 6.0f || (now - lastBeatTimestamp > 2500)) {
+      beatProbability *= 0.70f;
+      if (beatProbability < 0.02f) beatProbability = 0.0f;
+    } else {
+      float varFactor = (stdDev - 6.0f) / 8.0f;
+      if (varFactor < 0.0f) varFactor = 0.0f;
+      if (varFactor > 1.0f) varFactor = 1.0f;
+
+      float spanFactor = (span - 25.0f) / 30.0f;
+      if (spanFactor < 0.0f) spanFactor = 0.0f;
+      if (spanFactor > 1.0f) spanFactor = 1.0f;
+
+      float levelFactor = (m - 15.0f) / 35.0f;
+      if (levelFactor < 0.0f) levelFactor = 0.0f;
+      if (levelFactor > 1.0f) levelFactor = 1.0f;
+
+      uint32_t dtBeat = (lastBeatTimestamp > 0) ? (now - lastBeatTimestamp) : 99999;
+      float recency = 0.0f;
+      if (dtBeat <= 1200) {
+        recency = 1.0f;
+      } else if (dtBeat <= 2200) {
+        recency = 1.0f - ((float)(dtBeat - 1200) / 1000.0f);
+      }
+
+      float targetProb = varFactor * (spanFactor * 0.40f + levelFactor * 0.30f + recency * 0.30f);
+      if (varFactor > 0.4f && spanFactor > 0.4f) {
+        float boost = 0.70f + 0.30f * varFactor;
+        if (boost > targetProb) targetProb = boost;
+      }
+      if (targetProb < 0.0f) targetProb = 0.0f;
+      if (targetProb > 1.0f) targetProb = 1.0f;
+
+      if (targetProb < beatProbability) {
+        beatProbability = (beatProbability * 0.70f) + (targetProb * 0.30f);
+      } else {
+        beatProbability = (beatProbability * 0.88f) + (targetProb * 0.12f);
+      }
+      if (beatProbability < 0.02f) beatProbability = 0.0f;
     }
-
-    // 3. Absolute low frequency presence factor
-    float levelFactor = (lowFreqBuffer.mean - 10.0f) / 25.0f;
-    if (levelFactor < 0.0f) levelFactor = 0.0f;
-    if (levelFactor > 1.0f) levelFactor = 1.0f;
-
-    float targetProb = varFactor * (0.6f * recencyFactor + 0.4f * levelFactor);
-    if (recencyFactor > 0.5f && varFactor > 0.3f) {
-      float boosted = 0.75f + 0.25f * varFactor;
-      if (boosted > targetProb) targetProb = boosted;
-    }
-    if (targetProb < 0.0f) targetProb = 0.0f;
-    if (targetProb > 1.0f) targetProb = 1.0f;
-
-    // Smooth transitions (EMA filter)
-    beatProbability = (beatProbability * 0.88f) + (targetProb * 0.12f);
-    if (beatProbability < 0.01f) beatProbability = 0.0f;
-    if (beatProbability > 1.0f) beatProbability = 1.0f;
   }
 }

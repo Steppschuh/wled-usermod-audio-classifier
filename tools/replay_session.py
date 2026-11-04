@@ -168,6 +168,7 @@ class SimulatedAudioClassifier:
         dt = (t - self.last_beat_timestamp) if self.last_beat_timestamp > 0 else 10000
         is_offbeat = (self.duration_between_beats > 0 and dt < int(self.duration_between_beats * 0.72))
         enough_delay = (dt >= 280 and not is_offbeat)
+        has_bass = (bands[0] >= 40 or bands[1] >= 40) and (bass_ratio >= 0.30)
 
         thresh = 20.0
         if dt < 280:
@@ -175,7 +176,7 @@ class SimulatedAudioClassifier:
         elif dt > 380:
             thresh = 10.0
 
-        is_beat = (bass_flux > thresh and enough_delay and not is_snare)
+        is_beat = has_bass and (bass_flux > thresh and enough_delay and not is_snare)
 
         if is_beat:
             self.beat_times.append(t)
@@ -315,7 +316,13 @@ class SimulatedAudioClassifier:
         # 10. Music Beat Probability
         if self.presence == "quiet" or self.semantic_state != "music":
             self.beat_probability = 0.0
+        elif self.phrase_state in ("intro", "outro", "buildup", "breakdown", "steady"):
+            # Inbetween sections: expect low beat probability (< 0.20)
+            self.beat_probability *= 0.70
+            if self.beat_probability < 0.02:
+                self.beat_probability = 0.0
         else:
+            # VERSE or CHORUS
             low_freq = (bands[0] * 1.3 + bands[1] * 0.7) / 2.0
             self.low_freq_buf.append(low_freq)
             if len(self.low_freq_buf) > 75:
@@ -324,27 +331,34 @@ class SimulatedAudioClassifier:
             m = sum(self.low_freq_buf) / len(self.low_freq_buf)
             var = sum((x - m) ** 2 for x in self.low_freq_buf) / len(self.low_freq_buf)
             std_dev = math.sqrt(var)
+            span = max(self.low_freq_buf) - min(self.low_freq_buf)
 
-            var_factor = max(0.0, min(1.0, (std_dev - 4.0) / 8.0))
+            has_active_bass = (bands[0] >= 35 or bands[1] >= 35 or m >= 45.0) and (bass_ratio >= 0.30)
             dt_beat = t - self.last_beat_timestamp if self.last_beat_timestamp > 0 else 99999
-            if dt_beat <= 1500:
-                recency_factor = 1.0
-            elif dt_beat <= 2500:
-                recency_factor = 1.0 - ((dt_beat - 1500) / 1000.0)
+
+            if not has_active_bass or m < 35.0 or dt_beat > 2500:
+                self.beat_probability *= 0.70
+                if self.beat_probability < 0.02:
+                    self.beat_probability = 0.0
             else:
-                recency_factor = 0.0
+                var_factor = max(0.0, min(1.0, (std_dev - 6.0) / 8.0))
+                span_factor = max(0.0, min(1.0, (span - 25.0) / 30.0))
+                level_factor = max(0.0, min(1.0, (m - 35.0) / 35.0))
+                recency = 1.0 if dt_beat <= 1200 else (max(0.0, 1.0 - (dt_beat - 1200) / 1000.0) if dt_beat <= 2200 else 0.0)
 
-            level_factor = max(0.0, min(1.0, (m - 10.0) / 25.0))
-            target_prob = var_factor * (0.6 * recency_factor + 0.4 * level_factor)
-            if recency_factor > 0.5 and var_factor > 0.3:
-                target_prob = max(target_prob, 0.75 + 0.25 * var_factor)
-            target_prob = max(0.0, min(1.0, target_prob))
+                target_prob = (var_factor * 0.35) + (span_factor * 0.25) + (level_factor * 0.25) + (recency * 0.15)
+                if var_factor > 0.4 and span_factor > 0.4 and level_factor > 0.4:
+                    boost = 0.70 + 0.30 * min(var_factor, level_factor)
+                    if boost > target_prob:
+                        target_prob = boost
+                target_prob = max(0.0, min(1.0, target_prob))
 
-            self.beat_probability = (self.beat_probability * 0.88) + (target_prob * 0.12)
-            if self.beat_probability < 0.01:
-                self.beat_probability = 0.0
-            if self.beat_probability > 1.0:
-                self.beat_probability = 1.0
+                if target_prob < self.beat_probability:
+                    self.beat_probability = (self.beat_probability * 0.70) + (target_prob * 0.30)
+                else:
+                    self.beat_probability = (self.beat_probability * 0.88) + (target_prob * 0.12)
+                if self.beat_probability < 0.02:
+                    self.beat_probability = 0.0
 
 
 def format_duration(seconds: float) -> str:
@@ -478,6 +492,8 @@ def main():
                 exp_ph = a.get("expected_phrase")
                 min_bpm = a.get("min_bpm")
                 max_bpm = a.get("max_bpm")
+                min_beat_prob = a.get("min_beat_prob")
+                max_beat_prob = a.get("max_beat_prob")
 
                 errs = []
                 if exp_p and exp_p.lower() != classifier.presence.lower():
@@ -490,6 +506,10 @@ def main():
                     errs.append(f"bpm expected >= {min_bpm}, got {classifier.bpm}")
                 if max_bpm and classifier.bpm > max_bpm:
                     errs.append(f"bpm expected <= {max_bpm}, got {classifier.bpm}")
+                if min_beat_prob is not None and classifier.beat_probability < min_beat_prob:
+                    errs.append(f"beat_probability expected >= {min_beat_prob:.2f}, got {classifier.beat_probability:.2f}")
+                if max_beat_prob is not None and classifier.beat_probability > max_beat_prob:
+                    errs.append(f"beat_probability expected <= {max_beat_prob:.2f}, got {classifier.beat_probability:.2f}")
 
                 if errs:
                     failed_asserts += 1

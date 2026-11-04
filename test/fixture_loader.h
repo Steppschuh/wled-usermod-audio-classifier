@@ -42,6 +42,8 @@ struct FixtureAssertion {
   std::string expectedPhrase;
   uint16_t minBpm = 0;
   uint16_t maxBpm = 0;
+  float minBeatProb = -1.0f;
+  float maxBeatProb = -1.0f;
   bool fired = false;
 };
 
@@ -97,6 +99,12 @@ public:
       }
       if (a["max_bpm"].is<uint16_t>()) {
         fa.maxBpm = a["max_bpm"].as<uint16_t>();
+      }
+      if (a["min_beat_prob"].is<float>()) {
+        fa.minBeatProb = a["min_beat_prob"].as<float>();
+      }
+      if (a["max_beat_prob"].is<float>()) {
+        fa.maxBeatProb = a["max_beat_prob"].as<float>();
       }
       assertions.push_back(fa);
     }
@@ -229,6 +237,22 @@ public:
               TEST_FAIL_MESSAGE(msg.c_str());
             }
           }
+          if (a.minBeatProb >= 0.0f) {
+            float actProb = classifier.getBeatProbability();
+            if (actProb < a.minBeatProb) {
+              std::string msg = "Assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
+                                "s: Expected beat probability >= " + std::to_string(a.minBeatProb) + " but got " + std::to_string(actProb);
+              TEST_FAIL_MESSAGE(msg.c_str());
+            }
+          }
+          if (a.maxBeatProb >= 0.0f) {
+            float actProb = classifier.getBeatProbability();
+            if (actProb > a.maxBeatProb) {
+              std::string msg = "Assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
+                                "s: Expected beat probability <= " + std::to_string(a.maxBeatProb) + " but got " + std::to_string(actProb);
+              TEST_FAIL_MESSAGE(msg.c_str());
+            }
+          }
         }
 
         // Window assertion
@@ -272,6 +296,22 @@ public:
               if (actBpm > a.maxBpm) {
                 std::string msg = "Window assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
                                   "s: Expected BPM <= " + std::to_string(a.maxBpm) + " but got " + std::to_string(actBpm);
+                TEST_FAIL_MESSAGE(msg.c_str());
+              }
+            }
+            if (a.minBeatProb >= 0.0f) {
+              float actProb = classifier.getBeatProbability();
+              if (actProb < a.minBeatProb) {
+                std::string msg = "Window assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
+                                  "s: Expected beat probability >= " + std::to_string(a.minBeatProb) + " but got " + std::to_string(actProb);
+                TEST_FAIL_MESSAGE(msg.c_str());
+              }
+            }
+            if (a.maxBeatProb >= 0.0f) {
+              float actProb = classifier.getBeatProbability();
+              if (actProb > a.maxBeatProb) {
+                std::string msg = "Window assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
+                                  "s: Expected beat probability <= " + std::to_string(a.maxBeatProb) + " but got " + std::to_string(actProb);
                 TEST_FAIL_MESSAGE(msg.c_str());
               }
             }

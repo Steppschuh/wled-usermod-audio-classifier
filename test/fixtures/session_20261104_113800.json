@@ -87,6 +87,12 @@
         "expected_state": "music"
       },
       {
+        "description": "Breakdown 1 exhibits low beat probability inbetween choruses (< 0.20)",
+        "time_sec": 22.0,
+        "expected_state": "music",
+        "max_beat_prob": 0.20
+      },
+      {
         "description": "Second 8-bar chorus locked without flapping",
         "min_time_sec": 28.0,
         "max_time_sec": 38.0,
@@ -94,12 +100,13 @@
         "expected_state": "music"
       },
       {
-        "description": "Second chorus drop locks ~141 BPM",
+        "description": "Second chorus drop locks ~141 BPM and high beat probability (> 0.70)",
         "time_sec": 35.0,
         "expected_phrase": "chorus",
         "expected_state": "music",
         "min_bpm": 135,
-        "max_bpm": 147
+        "max_bpm": 147,
+        "min_beat_prob": 0.70
       },
       {
         "description": "Third chorus drop sustains peak phrase and accurate ~141 BPM",
@@ -115,6 +122,12 @@
         "expected_state": "music"
       },
       {
+        "description": "Major breakdown exhibits low beat probability (< 0.20)",
+        "time_sec": 95.0,
+        "expected_state": "music",
+        "max_beat_prob": 0.20
+      },
+      {
         "description": "Fourth explosive drop engages chorus and locks ~141 BPM",
         "time_sec": 120.0,
         "expected_phrase": "chorus",
@@ -123,10 +136,22 @@
         "max_bpm": 145
       },
       {
+        "description": "Fourth drop sustains high beat probability (> 0.70)",
+        "time_sec": 125.0,
+        "expected_state": "music",
+        "min_beat_prob": 0.70
+      },
+      {
         "description": "Track end decays to outro",
         "time_sec": 175.0,
         "expected_phrase": "outro",
         "expected_state": "music"
+      },
+      {
+        "description": "Outro exhibits low beat probability (< 0.20)",
+        "time_sec": 165.0,
+        "expected_state": "music",
+        "max_beat_prob": 0.20
       },
       {
         "description": "Zero false classification: continuous music throughout entire 3-minute track",
