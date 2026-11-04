@@ -58,11 +58,13 @@ class SimulatedAudioClassifier:
         self.bpm = 0
         self.bpm_lock_count = 0
         self.duration_between_beats = 0
+        self.last_bpm_update_time = 0
         self.beat_delay_buffer = []
         self.current_1s_peak = 0.0
         self.peak_1s_level = 0.0
         self.last_phrase_change = 0
         self.low_freq_buf = []
+        self.beat_feature_buf = []
         self.beat_probability = 0.0
 
         self.tentative_prev_phrase = "steady"
@@ -169,78 +171,135 @@ class SimulatedAudioClassifier:
         total_energy = sum(bands)
         bass_energy = bands[0] + bands[1] if len(bands) >= 2 else 0
         bass_ratio = (bass_energy / total_energy) if total_energy > 0 else 0.0
-        is_snare = (len(bands) >= 4 and bands[3] > bands[0] * 1.2) and (bass_ratio < 0.30)
+        is_mid = len(bands) >= 5 and ((bands[2] + bands[3] + bands[4]) > (bands[0] + bands[1]) * 1.50)
+        is_quiet = lvl < (50.0 / 255.0 * 100.0)
 
         dt = (t - self.last_beat_timestamp) if self.last_beat_timestamp > 0 else 10000
         is_offbeat = (self.duration_between_beats > 0 and dt < int(self.duration_between_beats * 0.72))
         enough_delay = (dt >= 280 and not is_offbeat)
-        has_bass = (bands[0] >= 40 or bands[1] >= 40) and (bass_ratio >= 0.30)
+        has_bass = (bands[0] >= 50 or (bands[0] >= 38 and bands[0] + bands[1] >= 85)) and (bass_ratio >= 0.28)
 
-        thresh = 20.0
-        if dt < 280:
-            thresh = 45.0
-        elif dt > 380:
-            thresh = 10.0
+        if not has_bass or is_quiet or is_mid:
+            bass_flux = 0.0
+        elif pk:
+            if bass_flux > 8.0:
+                bass_flux *= 1.25
+        bass_flux = min(100.0, bass_flux)
 
-        is_beat = has_bass and (bass_flux > thresh and enough_delay and not is_snare)
+        self.beat_feature_buf.append(bass_flux)
+        if len(self.beat_feature_buf) > 16:
+            self.beat_feature_buf.pop(0)
+        rms_flux = math.sqrt(sum(x * x for x in self.beat_feature_buf) / len(self.beat_feature_buf)) if self.beat_feature_buf else 0.0
+
+        # Phase-locked expectation
+        expected_prob = 0.0
+        if self.duration_between_beats > 0:
+            last_ref = self.last_bpm_update_time if (t - self.last_bpm_update_time < 10 * self.duration_between_beats) else self.last_beat_timestamp
+            next_beat = last_ref + self.duration_between_beats
+            delta = next_beat - t
+            if delta < 0:
+                missed = 2 + int((t - next_beat) // self.duration_between_beats)
+                next_beat = last_ref + (missed * self.duration_between_beats)
+                delta = next_beat - t
+            if delta > (self.duration_between_beats // 2):
+                delta = self.duration_between_beats - delta
+            delta = abs(delta)
+            expected_prob = (self.duration_between_beats - delta) / self.duration_between_beats
+            expected_prob = min(1.0, max(0.0, expected_prob ** 5.0))
+
+        low_freq = (bands[0] * 1.3 + bands[1] * 0.7) / 2.0
+        self.low_freq_buf.append(low_freq)
+        if len(self.low_freq_buf) > 75:
+            self.low_freq_buf.pop(0)
+
+        m = sum(self.low_freq_buf) / len(self.low_freq_buf)
+        var = sum((x - m) ** 2 for x in self.low_freq_buf) / len(self.low_freq_buf)
+        std_dev = math.sqrt(var)
+        span = max(self.low_freq_buf) - min(self.low_freq_buf)
+        has_low_freq_var = (len(self.low_freq_buf) < 8) or (std_dev >= 6.0 and span >= 25.0)
+
+        thresh = 42.0
+        beat_prob_active = (rms_flux > 2.0)
+        if beat_prob_active and enough_delay:
+            recency = min(1.0, max(0.0, (dt - 280.0) / 100.0))
+            thresh -= (42.0 - 20.0) * recency
+            thresh = max(20.0, thresh)
+            thresh -= (20.0 - 12.0) * expected_prob
+            thresh = max(12.0, thresh)
+
+        is_beat = has_bass and has_low_freq_var and (bass_flux > thresh and enough_delay)
 
         if is_beat:
             self.beat_times.append(t)
             if len(self.beat_times) > 16:
                 self.beat_times.pop(0)
 
-            in_beat_phrase = self.phrase_state in ("verse", "chorus")
-            if in_beat_phrase and (self.beat_probability > 0.01 or len(self.beat_times) >= 1):
+            in_beat_phrase = self.phrase_state in ("verse", "chorus", "buildup")
+            has_recent_bpm = (self.bpm > 0 and self.duration_between_beats > 0 and (t - self.last_bpm_update_time) <= 8 * self.duration_between_beats)
+            if in_beat_phrase and (self.beat_probability >= 0.15 or has_recent_bpm or (self.bpm == 0 and len(self.beat_times) >= 2)):
                 if self.last_beat_timestamp > 0 and dt <= 2000:
                     num_beats = max(1, round(dt / self.duration_between_beats)) if self.duration_between_beats > 0 else 1
-                    norm_intv = dt / num_beats
+                    norm_intv = dt // num_beats
                     if 250 <= norm_intv <= 750:
-                        self.beat_delay_buffer.append(norm_intv)
+                        self.beat_delay_buffer.append(float(norm_intv // 10))
                         if len(self.beat_delay_buffer) > 8:
                             self.beat_delay_buffer.pop(0)
                         if len(self.beat_delay_buffer) >= 4:
-                            avg_intv = sum(self.beat_delay_buffer) / len(self.beat_delay_buffer)
-                            cand = 60000.0 / avg_intv
-                            while cand > 175.0: cand *= 0.5
-                            while cand < 85.0: cand *= 2.0
+                            m_intv = sum(self.beat_delay_buffer) / len(self.beat_delay_buffer)
+                            v_intv = sum((x - m_intv) ** 2 for x in self.beat_delay_buffer) / len(self.beat_delay_buffer)
+                            std_intv = math.sqrt(v_intv)
+                            if std_intv < 14.0:
+                                avg_intv = m_intv * 10.0
+                                if 250.0 <= avg_intv <= 1000.0:
+                                    cur_bpm = round(60000.0 / avg_intv)
+                                    if 40 <= cur_bpm <= 400:
+                                        if self.raw_bpm <= 0.0 or self.bpm == 0:
+                                            while cur_bpm > 175: cur_bpm //= 2
+                                            while cur_bpm < 85: cur_bpm *= 2
+                                            self.raw_bpm = float(cur_bpm)
+                                            self.bpm = cur_bpm
+                                            self.bpm_lock_count = 3
+                                        else:
+                                            cand1 = float(cur_bpm)
+                                            cand2 = float(cur_bpm) * 2.0
+                                            cand_half = float(cur_bpm) * 0.5
+                                            diff1 = abs(cand1 - self.raw_bpm)
+                                            diff2 = abs(cand2 - self.raw_bpm)
+                                            diff_half = abs(cand_half - self.raw_bpm)
+                                            best_cand = cand1
+                                            min_diff = diff1
+                                            if diff2 < min_diff:
+                                                min_diff = diff2
+                                                best_cand = cand2
+                                            if diff_half < min_diff:
+                                                min_diff = diff_half
+                                                best_cand = cand_half
+                                            max_diff = max(10.0, self.raw_bpm * 0.12)
+                                            if min_diff <= max_diff:
+                                                alpha = 0.35 if self.bpm_lock_count < 8 else 0.10
+                                                self.raw_bpm = (self.raw_bpm * (1.0 - alpha)) + (best_cand * alpha)
+                                                self.bpm_lock_count = min(30, self.bpm_lock_count + 1)
+                                            else:
+                                                if self.bpm_lock_count > 1:
+                                                    self.bpm_lock_count -= 1
+                                                else:
+                                                    while best_cand > 175.0: best_cand *= 0.5
+                                                    while best_cand < 85.0: best_cand *= 2.0
+                                                    self.raw_bpm = best_cand
+                                                    self.bpm_lock_count = 1
 
-                            if self.raw_bpm <= 0.0 or self.bpm == 0:
-                                self.raw_bpm = cand
-                                self.bpm_lock_count = 1
-                            else:
-                                cand2 = cand * 2.0
-                                cand_half = cand * 0.5
-                                diffs = [(abs(cand - self.raw_bpm), cand),
-                                         (abs(cand2 - self.raw_bpm), cand2),
-                                         (abs(cand_half - self.raw_bpm), cand_half)]
-                                diffs.sort()
-                                min_diff, best_cand = diffs[0]
-                                max_diff = max(10.0, self.raw_bpm * 0.12)
-                                if min_diff <= max_diff:
-                                    alpha = 0.35 if self.bpm_lock_count < 8 else 0.10
-                                    self.raw_bpm = (self.raw_bpm * (1.0 - alpha)) + (best_cand * alpha)
-                                    self.bpm_lock_count = min(30, self.bpm_lock_count + 1)
-                                else:
-                                    if self.bpm_lock_count > 2:
-                                        self.bpm_lock_count -= 2
-                                    else:
-                                        while best_cand > 175.0: best_cand *= 0.5
-                                        while best_cand < 85.0: best_cand *= 2.0
-                                        self.raw_bpm = best_cand
-                                        self.bpm_lock_count = 1
-
-                            self.bpm = round(self.raw_bpm)
-                            self.duration_between_beats = round(60000.0 / self.bpm)
+                                        if self.bpm_lock_count >= 3:
+                                            self.bpm = round(self.raw_bpm)
+                                        else:
+                                            self.bpm = round(self.raw_bpm)
+                                        self.duration_between_beats = round(60000.0 / self.bpm) if self.bpm > 0 else 0
+                                        self.last_bpm_update_time = t
             else:
                 self.beat_delay_buffer.clear()
-                self.raw_bpm = 0.0
-                self.bpm_lock_count = 0
             self.last_beat_timestamp = t
         else:
             if dt > 3000:
                 self.beat_delay_buffer.clear()
-                self.raw_bpm = 0.0
-                self.bpm_lock_count = 0
             if self.semantic_state != "music":
                 self.bpm = 0
                 self.raw_bpm = 0.0
@@ -317,40 +376,44 @@ class SimulatedAudioClassifier:
                             self.is_tentative = False
 
             prev_phrase_before = self.phrase_state
-            if self.phrase_state == "chorus":
-                if not self.is_tentative and time_in_phrase < phrase_dur:
-                    # Locked in chorus unless complete volume drop
-                    if self.current_level < (self.noise_floor + 2.0) and self.average_1s_level < (self.noise_floor + 3.0):
-                        self.phrase_state = "breakdown"
-                        self.last_phrase_change = t
-                elif self.current_level < (self.noise_floor + 3.0) and self.average_1s_level < (self.noise_floor + 4.0):
+            is_volume_collapsed = (self.current_level < (self.noise_floor + 5.0) and self.average_1s_level < (self.noise_floor + 8.0)) or (self.peak_1s_level < 28.0)
+            no_beats_recent = (dt > 1200)
+
+            if is_volume_collapsed and no_beats_recent:
+                if self.phrase_state in ("breakdown", "outro") and (time_in_phrase >= 16.0 or self.current_level < self.noise_floor + 3.0):
+                    self.phrase_state = "outro"
+                else:
                     self.phrase_state = "breakdown"
-                    self.last_phrase_change = t
-                elif self.peak_1s_level < 52.0:
+                self.last_phrase_change = t
+            elif self.phrase_state == "chorus":
+                if not self.is_tentative and time_in_phrase < phrase_dur and not is_volume_collapsed:
+                    self.phrase_state = "chorus"
+                elif self.peak_1s_level >= 50.0:
+                    self.phrase_state = "chorus"
+                elif not no_beats_recent:
                     self.phrase_state = "verse"
+                    self.last_phrase_change = t
+                else:
+                    self.phrase_state = "breakdown"
                     self.last_phrase_change = t
             elif self.peak_1s_level >= 52.0 and (self.bpm > 0 or is_beat):
                 if self.phrase_state != "chorus":
                     self.phrase_state = "chorus"
                     self.last_phrase_change = t
-            elif self.current_level < (self.noise_floor + 3.0) and self.average_1s_level < (self.noise_floor + 4.0):
-                if self.phrase_state in ("breakdown", "outro"):
-                    self.phrase_state = "outro"
-                else:
-                    self.phrase_state = "breakdown"
-                    self.last_phrase_change = t
+            elif not no_beats_recent and (self.peak_1s_level >= 28.0 or self.average_1s_level >= 20.0):
+                self.phrase_state = "verse"
+                self.last_phrase_change = t
             else:
-                prev_ph = self.phrase_state
                 if self.long_bass_energy > 15.0 and self.short_bass_energy < (self.long_bass_energy * 0.45):
                     self.phrase_state = "breakdown"
-                elif self.current_level > 40.0 and self.bpm > 0:
-                    self.phrase_state = "chorus"
                 elif self.short_bass_energy > (self.long_bass_energy * 1.15):
                     self.phrase_state = "buildup"
+                elif is_volume_collapsed or no_beats_recent:
+                    self.phrase_state = "breakdown"
                 else:
                     self.phrase_state = "verse"
 
-                if self.phrase_state != prev_ph:
+                if self.phrase_state != prev_phrase_before:
                     self.last_phrase_change = t
 
             if self.phrase_state != prev_phrase_before:
@@ -368,39 +431,23 @@ class SimulatedAudioClassifier:
         # 10. Music Beat Probability
         if self.presence == "quiet" or self.semantic_state != "music":
             self.beat_probability = 0.0
-        elif self.phrase_state in ("intro", "outro", "buildup", "breakdown", "steady"):
-            # Inbetween sections: expect low beat probability (< 0.20)
-            self.beat_probability *= 0.70
-            if self.beat_probability < 0.02:
-                self.beat_probability = 0.0
         else:
-            # VERSE or CHORUS
-            low_freq = (bands[0] * 1.3 + bands[1] * 0.7) / 2.0
-            self.low_freq_buf.append(low_freq)
-            if len(self.low_freq_buf) > 75:
-                self.low_freq_buf.pop(0)
-
-            m = sum(self.low_freq_buf) / len(self.low_freq_buf)
-            var = sum((x - m) ** 2 for x in self.low_freq_buf) / len(self.low_freq_buf)
-            std_dev = math.sqrt(var)
-            span = max(self.low_freq_buf) - min(self.low_freq_buf)
-
-            has_active_bass = (bands[0] >= 35 or bands[1] >= 35 or m >= 45.0) and (bass_ratio >= 0.30)
+            has_active_bass = (bands[0] >= 35 or bands[1] >= 35 or m >= 25.0 or span >= 40.0)
             dt_beat = t - self.last_beat_timestamp if self.last_beat_timestamp > 0 else 99999
 
-            if not has_active_bass or m < 35.0 or dt_beat > 2500:
+            if not has_active_bass or std_dev < 6.0 or span < 20.0 or dt_beat > 2200:
                 self.beat_probability *= 0.70
                 if self.beat_probability < 0.02:
                     self.beat_probability = 0.0
             else:
                 var_factor = max(0.0, min(1.0, (std_dev - 6.0) / 8.0))
                 span_factor = max(0.0, min(1.0, (span - 25.0) / 30.0))
-                level_factor = max(0.0, min(1.0, (m - 35.0) / 35.0))
-                recency = 1.0 if dt_beat <= 1200 else (max(0.0, 1.0 - (dt_beat - 1200) / 1000.0) if dt_beat <= 2200 else 0.0)
+                level_factor = max(0.0, min(1.0, (m - 15.0) / 35.0))
+                recency = 1.0 if dt_beat <= 1000 else (max(0.0, 1.0 - (dt_beat - 1000) / 1000.0) if dt_beat <= 2000 else 0.0)
 
-                target_prob = (var_factor * 0.35) + (span_factor * 0.25) + (level_factor * 0.25) + (recency * 0.15)
-                if var_factor > 0.4 and span_factor > 0.4 and level_factor > 0.4:
-                    boost = 0.70 + 0.30 * min(var_factor, level_factor)
+                target_prob = var_factor * (span_factor * 0.40 + level_factor * 0.30 + recency * 0.30)
+                if var_factor > 0.4 and span_factor > 0.4:
+                    boost = 0.70 + 0.30 * var_factor
                     if boost > target_prob:
                         target_prob = boost
                 target_prob = max(0.0, min(1.0, target_prob))

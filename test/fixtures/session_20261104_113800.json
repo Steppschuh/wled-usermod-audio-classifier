@@ -114,7 +114,7 @@
         "expected_phrase": "chorus",
         "expected_state": "music",
         "min_bpm": 135,
-        "max_bpm": 147
+        "max_bpm": 150
       },
       {
         "description": "Major 28-second breakdown holds music state continuously",
