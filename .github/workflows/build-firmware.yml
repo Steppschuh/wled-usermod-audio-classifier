@@ -3,7 +3,7 @@ name: Build Firmware Binaries
 on:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]
+    tags: [ 'v*', 'wled-*' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -13,7 +13,7 @@ on:
         required: false
         default: '6ee67dec94f3cd3fb2b85b81abb9de380b924c48'
       release_tag:
-        description: 'Optional tag for GitHub Release (e.g. v0.1.0-wled-v16.0.1)'
+        description: 'Optional tag for GitHub Release (e.g. wled-v16.0.1-mod-v0.1.0)'
         required: false
         default: ''
       release_title:
@@ -161,7 +161,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v') || (inputs.release_tag != '' && inputs.release_tag != null)
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/wled-') || (inputs.release_tag != '' && inputs.release_tag != null)
     needs: build-firmware
     runs-on: ubuntu-latest
     permissions:
