@@ -22,6 +22,10 @@ from datetime import datetime
 try:
     import paho.mqtt.client as mqtt
 except ImportError:
+    # Try falling back to PlatformIO's Python virtualenv if available
+    pio_py = os.path.expanduser("~/.platformio/penv/bin/python3")
+    if os.path.isfile(pio_py) and sys.executable != pio_py:
+        os.execv(pio_py, [pio_py] + sys.argv)
     print("\n❌ Missing dependency: paho-mqtt")
     print("Please install it using:")
     print("    pip install paho-mqtt\n")
@@ -134,6 +138,8 @@ def main():
     time.sleep(0.5)
     client.publish("wled/audio/stream", "ON")
     client.publish("wled/all/audio/stream", "ON")
+    client.publish(f"{args.device_topic}/audio/stream", "ON")
+    client.publish(f"{args.device_topic}/stream", "ON")
 
     # Start MacBook microphone recording via ffmpeg (AVFoundation on macOS)
     ffmpeg_proc = None
@@ -313,3 +319,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
