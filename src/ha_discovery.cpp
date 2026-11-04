@@ -188,8 +188,9 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     opts.add("intro");
     opts.add("verse");
     opts.add("buildup");
+    opts.add("chorus");
     opts.add("breakdown");
-    opts.add("drop");
+    opts.add("outro");
     doc["icon"] = "mdi:music-note-eighth";
     doc["entity_category"] = "diagnostic";
     doc["uniq_id"] = chipId + "_audio_phrase";

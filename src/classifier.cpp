@@ -95,8 +95,9 @@ const char* AudioClassifier::getPhraseStateStr() const {
     case MusicPhrase::VERSE:     return "verse";
     case MusicPhrase::INTRO:     return "intro";
     case MusicPhrase::BUILDUP:   return "buildup";
+    case MusicPhrase::CHORUS:    return "chorus";
     case MusicPhrase::BREAKDOWN: return "breakdown";
-    case MusicPhrase::DROP:      return "drop";
+    case MusicPhrase::OUTRO:     return "outro";
     default:                     return "verse";
   }
 }
@@ -105,6 +106,7 @@ const char* AudioClassifier::getSoundEnergyStr() const {
   switch (soundEnergy) {
     case SoundEnergy::SILENCE:   return "silence";
     case SoundEnergy::NOISE:     return "noise";
+    case SoundEnergy::OUTRO:     return "outro";
     case SoundEnergy::BREAKDOWN: return "breakdown";
     case SoundEnergy::BUILDUP:   return "buildup";
     case SoundEnergy::INTRO:     return "intro";
@@ -578,8 +580,12 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
         updatedEnergy = SoundEnergy::VERSE;
       }
     } else {
-      if (soundEnergy == SoundEnergy::CHORUS || soundEnergy == SoundEnergy::BREAKDOWN || bassTrend < 0.50f || (bassRatio < 0.15f && currentLevel > noiseFloor + 2.0f)) {
-        updatedEnergy = SoundEnergy::BREAKDOWN;
+      if (soundEnergy == SoundEnergy::CHORUS || soundEnergy == SoundEnergy::BREAKDOWN || soundEnergy == SoundEnergy::OUTRO || bassTrend < 0.50f || (bassRatio < 0.15f && currentLevel > noiseFloor + 2.0f)) {
+        if ((soundEnergy == SoundEnergy::BREAKDOWN || soundEnergy == SoundEnergy::OUTRO) && (barsSinceEnergyUpdate >= 8 || currentLevel < noiseFloor + 4.0f)) {
+          updatedEnergy = SoundEnergy::OUTRO;
+        } else {
+          updatedEnergy = SoundEnergy::BREAKDOWN;
+        }
       } else if (bassTrend > 1.25f || (now - lastDropTimestamp > phraseDur && barsWithoutBeats <= 4)) {
         updatedEnergy = SoundEnergy::BUILDUP;
       } else {
@@ -589,7 +595,10 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
 
     if (now - lastEnergyUpdateTime >= 1000) {
       if (updatedEnergy > soundEnergy) {
-        if (soundEnergy == SoundEnergy::INTRO) {
+        if (soundEnergy == SoundEnergy::OUTRO) {
+          if (dropInLastPhrase) soundEnergy = SoundEnergy::CHORUS;
+          else if (barsSinceEnergyUpdate >= 2) soundEnergy = SoundEnergy::VERSE;
+        } else if (soundEnergy == SoundEnergy::INTRO) {
           if (dropInLastPhrase) soundEnergy = SoundEnergy::CHORUS;
           else if (barsSinceEnergyUpdate >= 2) soundEnergy = SoundEnergy::VERSE;
         } else if (soundEnergy == SoundEnergy::VERSE) {
@@ -619,7 +628,10 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
             lastEnergyUpdateTime = now;
           }
         } else if (soundEnergy == SoundEnergy::BREAKDOWN) {
-          if (barsSinceEnergyUpdate >= 4) {
+          if (barsSinceEnergyUpdate >= 8 || currentLevel < noiseFloor + 4.0f) {
+            soundEnergy = SoundEnergy::OUTRO;
+            lastEnergyUpdateTime = now;
+          } else if (barsSinceEnergyUpdate >= 4) {
             soundEnergy = SoundEnergy::INTRO;
             lastEnergyUpdateTime = now;
           }
@@ -631,9 +643,10 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     }
 
     switch (soundEnergy) {
-      case SoundEnergy::CHORUS:    phraseState = MusicPhrase::DROP; break;
+      case SoundEnergy::CHORUS:    phraseState = MusicPhrase::CHORUS; break;
       case SoundEnergy::BUILDUP:   phraseState = MusicPhrase::BUILDUP; break;
       case SoundEnergy::BREAKDOWN: phraseState = MusicPhrase::BREAKDOWN; break;
+      case SoundEnergy::OUTRO:     phraseState = MusicPhrase::OUTRO; break;
       case SoundEnergy::INTRO:     phraseState = MusicPhrase::INTRO; break;
       case SoundEnergy::VERSE:     phraseState = MusicPhrase::VERSE; break;
       default:                     phraseState = MusicPhrase::VERSE; break;

@@ -174,7 +174,7 @@ void test_experimental_beat_and_phrasing(void) {
   TEST_ASSERT_UINT16_WITHIN(5, 120, classifier.getBPM());
   TEST_ASSERT_EQUAL_UINT8(100, classifier.getSoundEnergy()); // Climaxes to Chorus / Drop on initial bass explosion
   TEST_ASSERT_EQUAL_STRING("chorus", classifier.getSoundEnergyStr());
-  TEST_ASSERT_EQUAL_STRING("drop", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_STRING("chorus", classifier.getPhraseStateStr());
 
   // Continue steady groove past the initial phrase (> 12s)
   for (uint32_t t = 8020; t <= 16000; t += 20) {
@@ -230,9 +230,10 @@ void test_music_hangover_persists_across_breakdown(void) {
   }
   TEST_ASSERT_EQUAL_STRING("music", classifier.getSemanticStateStr());
 
-  // 2. 25-second breakdown: bass drops completely out, no beat peaks, quiet ambient synth/vocal
+  // 2. 25-second breakdown into outro: bass drops completely out, no beat peaks, quiet ambient synth/vocal
   // Even with low volume and zero beat peaks, semanticState MUST NOT flap to ambient_noise!
   bool sawBreakdownPhrase = false;
+  bool sawOutroPhrase = false;
   for (uint32_t t = 10020; t <= 35000; t += 20) {
     frame.timestampMs = t;
     frame.levelPercent = 14.0f; // low energy breakdown
@@ -245,6 +246,9 @@ void test_music_hangover_persists_across_breakdown(void) {
     if (classifier.getPhraseState() == MusicPhrase::BREAKDOWN) {
       sawBreakdownPhrase = true;
     }
+    if (classifier.getPhraseState() == MusicPhrase::OUTRO) {
+      sawOutroPhrase = true;
+    }
 
     // At every frame within the 30s window, state must strictly remain "music"!
     if (classifier.getSemanticState() != AudioSemanticState::MUSIC) {
@@ -252,9 +256,12 @@ void test_music_hangover_persists_across_breakdown(void) {
     }
   }
 
-  // Confirm state is still music at second 35 (25s into breakdown)
+  // Confirm state is still music at second 35 (25s into breakdown/outro)
   TEST_ASSERT_EQUAL_STRING("music", classifier.getSemanticStateStr());
   TEST_ASSERT_TRUE(sawBreakdownPhrase);
+  TEST_ASSERT_TRUE(sawOutroPhrase);
+  TEST_ASSERT_EQUAL_UINT8(30, classifier.getSoundEnergy());
+  TEST_ASSERT_EQUAL_STRING("outro", classifier.getPhraseStateStr());
 
   // 3. After full 30s hold expires (> 10000 + 30000 = 40000ms), and continued ambient non-music:
   // Ambient noise has flat spectrum across 16 bands (bassRatio = 4/16 = 0.25)

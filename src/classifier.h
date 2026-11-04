@@ -23,13 +23,15 @@ enum class MusicPhrase : uint8_t {
   VERSE = 0,
   INTRO = 1,
   BUILDUP = 2,
-  BREAKDOWN = 3,
-  DROP = 4
+  CHORUS = 3,
+  BREAKDOWN = 4,
+  OUTRO = 5
 };
 
 enum class SoundEnergy : uint8_t {
   SILENCE = 0,
   NOISE = 10,
+  OUTRO = 30,
   BREAKDOWN = 40,
   BUILDUP = 50,
   INTRO = 60,
