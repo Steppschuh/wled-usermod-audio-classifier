@@ -5,9 +5,44 @@
     "duration_seconds": 60.05,
     "frame_count": 2954,
     "primary_label": "music",
-    "description": "",
+    "description": "60s real-world music track at ~140 BPM with energy buildup",
     "audio_file": "session_20261104_030037.wav",
-    "segments": []
+    "segments": [
+      {
+        "start_sec": 0.0,
+        "end_sec": 45.0,
+        "phrase": "steady"
+      },
+      {
+        "start_sec": 45.0,
+        "end_sec": 60.0,
+        "phrase": "buildup"
+      }
+    ],
+    "assertions": [
+      {
+        "description": "Starts quiet before sound presence engages",
+        "time_sec": 0.5,
+        "expected_presence": "quiet"
+      },
+      {
+        "description": "Sustained music triggers sound presence detection",
+        "time_sec": 3.0,
+        "expected_presence": "sound"
+      },
+      {
+        "description": "Rhythm and harmonics converge to music classification",
+        "time_sec": 6.0,
+        "expected_state": "music"
+      },
+      {
+        "description": "Music state sustained continuously throughout playback",
+        "min_time_sec": 8.0,
+        "max_time_sec": 60.0,
+        "expected_state": "music",
+        "expected_presence": "sound"
+      }
+    ]
   },
   "frames": [
     {

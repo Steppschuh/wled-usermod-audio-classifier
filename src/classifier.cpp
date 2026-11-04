@@ -116,9 +116,10 @@ void AudioClassifier::update1sMetrics(uint32_t now) {
   sumSquaredEnergy = 0.0f;
   frameCount1s = 0;
 
-  // Only adapt baseline background noise floor while the room is in QUIET state.
+  // Only adapt baseline background noise floor while the room is in QUIET state
+  // and sound is not actively pending to turn on.
   // This completely prevents sustained music from contaminating and elevating the baseline noise floor!
-  if (presence == SoundPresence::QUIET) {
+  if (presence == SoundPresence::QUIET && !isPendingOn) {
     updateNoiseFloor(average1sLevel);
   }
 }

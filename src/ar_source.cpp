@@ -114,7 +114,8 @@ bool AudioReactiveSource::pollFrame(AudioFrame& outFrame) {
   outFrame.timestampMs = now;
   outFrame.rawVolume = raw;
   outFrame.smoothedVolume = smth;
-  outFrame.levelPercent = (raw / 255.0f) * 100.0f;
+  float effectiveVol = (smth > raw) ? smth : raw;
+  outFrame.levelPercent = (effectiveVol / 255.0f) * 100.0f;
   if (outFrame.levelPercent > 100.0f) outFrame.levelPercent = 100.0f;
   if (outFrame.levelPercent < 0.0f) outFrame.levelPercent = 0.0f;
 

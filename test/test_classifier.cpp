@@ -245,6 +245,18 @@ void test_music_hangover_persists_across_breakdown(void) {
   TEST_ASSERT_EQUAL_STRING("ambient_noise", classifier.getSemanticStateStr());
 }
 
+#include "fixture_loader.h"
+
+void test_replay_recorded_music_session(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.musicHoldMs = 30000;
+  AudioClassifier classifier(cfg);
+
+  bool ok = FixtureReplayer::replayAndVerify("test/fixtures/session_20261104_030037.json", classifier);
+  TEST_ASSERT_TRUE(ok);
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_initial_state_is_quiet_and_silence);
@@ -254,5 +266,6 @@ int main(int argc, char **argv) {
   RUN_TEST(test_short_pause_does_not_flap_presence);
   RUN_TEST(test_experimental_beat_and_phrasing);
   RUN_TEST(test_music_hangover_persists_across_breakdown);
+  RUN_TEST(test_replay_recorded_music_session);
   return UNITY_END();
 }
