@@ -153,17 +153,18 @@ void test_experimental_beat_and_phrasing(void) {
   for (uint32_t t = 0; t <= 8000; t += 20) {
     frame.timestampMs = t;
     frame.levelPercent = 35.0f;
-    frame.bands[0] = 120; // Bass
-    frame.bands[1] = 100;
-    frame.bands[2] = 80;
-    frame.bands[8] = 40;  // Mid
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 20;
 
     if (t - lastBeat >= 500) {
       frame.isPeak = true;
+      frame.bands[0] = 140; // Bass transient
+      frame.bands[1] = 120;
+      frame.bands[2] = 80;
       lastBeat = t;
     } else {
       frame.isPeak = false;
     }
+    frame.bands[8] = 40;  // Mid
 
     classifier.processFrame(frame);
   }
@@ -177,19 +178,21 @@ void test_experimental_beat_and_phrasing(void) {
   TEST_ASSERT_EQUAL_STRING("chorus", classifier.getPhraseStateStr());
 
   // Continue steady groove past the initial 8-bar phrase (> 16s at 120 BPM)
-  for (uint32_t t = 8020; t <= 18000; t += 20) {
+  for (uint32_t t = 8020; t <= 20000; t += 20) {
     frame.timestampMs = t;
-    frame.levelPercent = 35.0f;
-    frame.bands[0] = 120;
-    frame.bands[1] = 100;
-    frame.bands[2] = 80;
-    frame.bands[8] = 40;
+    frame.levelPercent = 25.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 15;
+
     if (t - lastBeat >= 500) {
       frame.isPeak = true;
+      frame.bands[0] = 60; // Moderate bass transient for verse
+      frame.bands[1] = 45;
+      frame.bands[2] = 30;
       lastBeat = t;
     } else {
       frame.isPeak = false;
     }
+    frame.bands[8] = 30;
     classifier.processFrame(frame);
   }
 
@@ -255,6 +258,36 @@ void test_130_bpm_eighth_note_rejection_and_stability(void) {
   for (size_t i = 1; i < 5; i++) {
     TEST_ASSERT_EQUAL_UINT16(bpmSnapshots[0], bpmSnapshots[i]);
   }
+}
+
+void test_150_bpm_stability_and_no_octave_flapping(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  AudioClassifier classifier(cfg);
+
+  AudioFrame frame;
+  // 150 BPM: Quarter note beat = 400 ms.
+  uint32_t lastBeat = 0;
+
+  for (uint32_t t = 0; t <= 10000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 45.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 20;
+
+    if (t - lastBeat >= 400) {
+      frame.isPeak = true;
+      frame.bands[0] = 140;
+      frame.bands[1] = 120;
+      frame.bands[2] = 90;
+      lastBeat = t;
+    } else {
+      frame.isPeak = false;
+    }
+
+    classifier.processFrame(frame);
+  }
+
+  TEST_ASSERT_UINT16_WITHIN(5, 150, classifier.getBPM());
 }
 
 void test_music_hangover_persists_across_breakdown(void) {
@@ -390,6 +423,44 @@ void test_1s_average_and_peak_tracking(void) {
   TEST_ASSERT_FLOAT_WITHIN(1.0f, 15.03f, classifier.getAverageLevelPercent());
 }
 
+void test_music_beat_probability(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  AudioClassifier classifier(cfg);
+  AudioFrame frame;
+
+  // 1. Initial silence
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, classifier.getBeatProbability());
+
+  // 2. Constant ambient noise with low frequency rumble (no variance / beat)
+  for (uint32_t t = 0; t < 3000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 25.0f;
+    frame.bands[0] = 50; // Constant flat rumble
+    frame.bands[1] = 50;
+    classifier.processFrame(frame);
+  }
+  // No rhythmic variance -> beat probability must be 0
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, classifier.getBeatProbability());
+
+  // 3. Rhythmic beats at 128 BPM (interval ≈ 468ms) with high kick variance
+  for (uint32_t t = 3000; t < 10000; t += 20) {
+    frame.timestampMs = t;
+    bool isKick = ((t - 3000) % 468) < 40;
+    frame.levelPercent = isKick ? 60.0f : 15.0f;
+    frame.rawVolume = isKick ? 150.0f : 20.0f;
+    frame.bands[0] = isKick ? 180 : 10;
+    frame.bands[1] = isKick ? 140 : 10;
+    for (size_t b = 2; b < NUM_AUDIO_BANDS; b++) {
+      frame.bands[b] = isKick ? 20 : 5;
+    }
+    classifier.processFrame(frame);
+  }
+
+  // Active kicks with variance -> beat probability must be high (> 0.8)
+  TEST_ASSERT_TRUE(classifier.getBeatProbability() >= 0.80f);
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_initial_state_is_quiet_and_silence);
@@ -399,10 +470,12 @@ int main(int argc, char **argv) {
   RUN_TEST(test_short_pause_does_not_flap_presence);
   RUN_TEST(test_experimental_beat_and_phrasing);
   RUN_TEST(test_130_bpm_eighth_note_rejection_and_stability);
+  RUN_TEST(test_150_bpm_stability_and_no_octave_flapping);
   RUN_TEST(test_music_hangover_persists_across_breakdown);
   RUN_TEST(test_replay_recorded_music_session);
   RUN_TEST(test_replay_recorded_ambient_noise_session);
   RUN_TEST(test_replay_recorded_3min_phrase_changes_session);
   RUN_TEST(test_1s_average_and_peak_tracking);
+  RUN_TEST(test_music_beat_probability);
   return UNITY_END();
 }

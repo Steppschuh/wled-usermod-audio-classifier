@@ -137,6 +137,7 @@ public:
   const char* getPhraseStateStr() const;
   float getMusicConfidence() const { return musicConfidence; }
   uint16_t getBPM() const { return beatsPerMinute; }
+  float getBeatProbability() const { return beatProbability; }
   uint8_t getSoundEnergy() const { return (uint8_t)soundEnergy; }
   const char* getSoundEnergyStr() const;
   SoundEnergy getSoundEnergyState() const { return soundEnergy; }
@@ -193,9 +194,12 @@ private:
   static constexpr size_t FEATURE_BUFFER_SIZE = 75; // 1.5 seconds at 50Hz (20ms)
   RollingBuffer<FEATURE_BUFFER_SIZE> loudnessBuffer;
   RollingBuffer<FEATURE_BUFFER_SIZE> bassBuffer;
+  RollingBuffer<FEATURE_BUFFER_SIZE> lowFreqBuffer; // Low frequency variance buffer (bands 0 & 1)
   RollingBuffer<FEATURE_BUFFER_SIZE> spreadBuffer;
   RollingBuffer<FEATURE_BUFFER_SIZE> beatFeatureBuffer;
   RollingBuffer<8> beatDelayBuffer; // Last 8 beat intervals (2 bars)
+
+  float beatProbability = 0.0f;
 
   float maxLoudness = 20.0f;
   float decayedMaxLoudness = 20.0f;
@@ -229,6 +233,7 @@ private:
 
   // Energy & Phrasing Memory
   float prevBandsNorm[NUM_AUDIO_BANDS] = {0};
+  float prevBassEnergy = 0.0f;
   float shortBassEnergy = 0.0f;
   float longBassEnergy = 0.0f;
 };

@@ -52,10 +52,24 @@ class SimulatedAudioClassifier:
         self.beat_regularity = 0.0
         self.short_bass_energy = 0.0
         self.long_bass_energy = 0.0
+        self.prev_bass_energy = 0.0
+        self.last_beat_timestamp = 0
+        self.raw_bpm = 0.0
+        self.bpm = 0
+        self.bpm_lock_count = 0
+        self.duration_between_beats = 0
+        self.beat_delay_buffer = []
+        self.current_1s_peak = 0.0
+        self.peak_1s_level = 0.0
+        self.last_phrase_change = 0
+        self.low_freq_buf = []
+        self.beat_probability = 0.0
 
     def process_frame(self, t, lvl, raw, smth, pk, hz, mag, bands):
         # 1. Smooth instantaneous level
         self.current_level = (self.current_level * 0.7) + (lvl * 0.3)
+        if lvl > self.current_1s_peak:
+            self.current_1s_peak = lvl
 
         # 2. Accumulate energy for 1-second metric
         self.sum_squared_energy += (lvl * lvl)
@@ -68,6 +82,8 @@ class SimulatedAudioClassifier:
         if t - self.last_1s_tick >= 1000:
             self._update_1s_metrics(t)
             self.last_1s_tick = t
+            self.peak_1s_level = self.current_1s_peak
+            self.current_1s_peak = self.current_level
 
         # 4. Presence State Machine
         self._update_presence(t)
@@ -139,12 +155,84 @@ class SimulatedAudioClassifier:
                     self.is_pending_off = False
 
     def _update_music_and_phrasing(self, t, lvl, pk, bands):
-        # Beat tracking
-        if pk:
-            if not self.beat_times or (t - self.beat_times[-1] >= 200):
-                self.beat_times.append(t)
-                if len(self.beat_times) > 16:
-                    self.beat_times.pop(0)
+        # 1. Positive Bass Spectral Flux & Beat Detection
+        raw_bass = bands[0] * 1.3 + bands[1] * 0.7 if len(bands) >= 2 else 0.0
+        bass_flux = max(0.0, raw_bass - self.prev_bass_energy)
+        self.prev_bass_energy = raw_bass
+
+        total_energy = sum(bands)
+        bass_energy = bands[0] + bands[1] if len(bands) >= 2 else 0
+        bass_ratio = (bass_energy / total_energy) if total_energy > 0 else 0.0
+        is_snare = (len(bands) >= 4 and bands[3] > bands[0] * 1.2) and (bass_ratio < 0.30)
+
+        dt = (t - self.last_beat_timestamp) if self.last_beat_timestamp > 0 else 10000
+        is_offbeat = (self.duration_between_beats > 0 and dt < int(self.duration_between_beats * 0.72))
+        enough_delay = (dt >= 280 and not is_offbeat)
+
+        thresh = 20.0
+        if dt < 280:
+            thresh = 45.0
+        elif dt > 380:
+            thresh = 10.0
+
+        is_beat = (bass_flux > thresh and enough_delay and not is_snare)
+
+        if is_beat:
+            self.beat_times.append(t)
+            if len(self.beat_times) > 16:
+                self.beat_times.pop(0)
+
+            if self.last_beat_timestamp > 0 and dt <= 2000:
+                num_beats = max(1, round(dt / self.duration_between_beats)) if self.duration_between_beats > 0 else 1
+                norm_intv = dt / num_beats
+                if 250 <= norm_intv <= 750:
+                    self.beat_delay_buffer.append(norm_intv)
+                    if len(self.beat_delay_buffer) > 8:
+                        self.beat_delay_buffer.pop(0)
+                    if len(self.beat_delay_buffer) >= 4:
+                        avg_intv = sum(self.beat_delay_buffer) / len(self.beat_delay_buffer)
+                        cand = 60000.0 / avg_intv
+                        while cand > 175.0: cand *= 0.5
+                        while cand < 85.0: cand *= 2.0
+
+                        if self.raw_bpm <= 0.0 or self.bpm == 0:
+                            self.raw_bpm = cand
+                            self.bpm_lock_count = 1
+                        else:
+                            cand2 = cand * 2.0
+                            cand_half = cand * 0.5
+                            diffs = [(abs(cand - self.raw_bpm), cand),
+                                     (abs(cand2 - self.raw_bpm), cand2),
+                                     (abs(cand_half - self.raw_bpm), cand_half)]
+                            diffs.sort()
+                            min_diff, best_cand = diffs[0]
+                            max_diff = max(10.0, self.raw_bpm * 0.12)
+                            if min_diff <= max_diff:
+                                alpha = 0.35 if self.bpm_lock_count < 8 else 0.10
+                                self.raw_bpm = (self.raw_bpm * (1.0 - alpha)) + (best_cand * alpha)
+                                self.bpm_lock_count = min(30, self.bpm_lock_count + 1)
+                            else:
+                                if self.bpm_lock_count > 2:
+                                    self.bpm_lock_count -= 2
+                                else:
+                                    while best_cand > 175.0: best_cand *= 0.5
+                                    while best_cand < 85.0: best_cand *= 2.0
+                                    self.raw_bpm = best_cand
+                                    self.bpm_lock_count = 1
+
+                        self.bpm = round(self.raw_bpm)
+                        self.duration_between_beats = round(60000.0 / self.bpm)
+            self.last_beat_timestamp = t
+        else:
+            if dt > 3000:
+                self.beat_delay_buffer.clear()
+                self.raw_bpm = 0.0
+                self.bpm_lock_count = 0
+            if dt > 10000 or self.presence == "quiet":
+                self.bpm = 0
+                self.raw_bpm = 0.0
+                self.bpm_lock_count = 0
+                self.duration_between_beats = 0
 
         self.beat_regularity = 0.0
         if len(self.beat_times) >= 4:
@@ -155,19 +243,15 @@ class SimulatedAudioClassifier:
                 reg = 1.0 - (dev / avg)
                 self.beat_regularity = max(0.0, min(1.0, reg))
 
-        # Bass ratio
-        bass = bands[0] + bands[1] if len(bands) >= 2 else 0
-        mids = bands[8] + bands[9] if len(bands) >= 10 else 0
-        bass_ratio = (bass / (bass + mids)) if (bass + mids) > 0 else 0.0
-
         # Phrasing energy
-        self.short_bass_energy = (self.short_bass_energy * 0.90) + (bass * 0.10)
-        self.long_bass_energy = (self.long_bass_energy * 0.98) + (bass * 0.02)
+        self.short_bass_energy = (self.short_bass_energy * 0.90) + (bass_energy * 0.10)
+        self.long_bass_energy = (self.long_bass_energy * 0.98) + (bass_energy * 0.02)
 
         has_musical_evidence = (
             (self.beat_regularity > 0.45)
             or (self.beat_regularity > 0.30 and bass_ratio > 0.40)
-            or (self.current_level > 15.0 and bass_ratio > 0.45)
+            or (self.current_level > 15.0 and bass_ratio > 0.35)
+            or (self.bpm > 0)
         )
 
         if has_musical_evidence:
@@ -185,26 +269,28 @@ class SimulatedAudioClassifier:
         else:
             self.semantic_state = "ambient_noise" if self.current_level >= (self.noise_floor + self.margin) else "silence"
 
-        # Phrase state detection with 8-bar chorus lock
+        # Phrase state detection with 8-bar chorus lock & peak volume checks
         if self.semantic_state == "music":
-            if not hasattr(self, "last_phrase_change"):
-                self.last_phrase_change = 0
-            time_in_phrase = (t - self.last_phrase_change) / 1000.0
+            time_in_phrase = (t - self.last_phrase_change) / 1000.0 if self.last_phrase_change > 0 else 999.0
+            phrase_dur = (self.duration_between_beats * 32 / 1000.0) if self.duration_between_beats > 0 else 13.0
 
-            # 8 bars = 32 beats (approx 12-16s depending on tempo)
-            phrase_dur = 13.0
-            if len(self.beat_times) >= 4:
-                intervals = [self.beat_times[i] - self.beat_times[i-1] for i in range(1, len(self.beat_times))]
-                avg_ms = sum(intervals) / len(intervals)
-                if 250 <= avg_ms <= 1200:
-                    phrase_dur = (avg_ms * 32) / 1000.0
-
-            if self.phrase_state == "chorus" and time_in_phrase < phrase_dur:
-                # Hold chorus for minimum 8 bars unless complete volume drop
-                if self.current_level < (self.noise_floor + 2.0) or (self.long_bass_energy > 15.0 and self.short_bass_energy < (self.long_bass_energy * 0.35)):
+            if self.phrase_state == "chorus":
+                if time_in_phrase < phrase_dur:
+                    # Locked in chorus unless complete volume drop
+                    if self.current_level < (self.noise_floor + 2.0) and self.average_1s_level < (self.noise_floor + 3.0):
+                        self.phrase_state = "breakdown"
+                        self.last_phrase_change = t
+                elif self.current_level < (self.noise_floor + 3.0) and self.average_1s_level < (self.noise_floor + 4.0):
                     self.phrase_state = "breakdown"
                     self.last_phrase_change = t
-            elif self.current_level < (self.noise_floor + 3.0):
+                elif self.peak_1s_level < 52.0:
+                    self.phrase_state = "verse"
+                    self.last_phrase_change = t
+            elif self.peak_1s_level >= 52.0 and (self.bpm > 0 or is_beat):
+                if self.phrase_state != "chorus":
+                    self.phrase_state = "chorus"
+                    self.last_phrase_change = t
+            elif self.current_level < (self.noise_floor + 3.0) and self.average_1s_level < (self.noise_floor + 4.0):
                 if self.phrase_state in ("breakdown", "outro"):
                     self.phrase_state = "outro"
                 else:
@@ -214,7 +300,7 @@ class SimulatedAudioClassifier:
                 prev_ph = self.phrase_state
                 if self.long_bass_energy > 15.0 and self.short_bass_energy < (self.long_bass_energy * 0.45):
                     self.phrase_state = "breakdown"
-                elif (self.short_bass_energy > (self.long_bass_energy * 1.35) and self.short_bass_energy > 20.0) or (self.current_level > 35.0 and self.beat_regularity > 0.40):
+                elif self.current_level > 40.0 and self.bpm > 0:
                     self.phrase_state = "chorus"
                 elif self.short_bass_energy > (self.long_bass_energy * 1.15):
                     self.phrase_state = "buildup"
@@ -225,6 +311,40 @@ class SimulatedAudioClassifier:
                     self.last_phrase_change = t
         else:
             self.phrase_state = "steady"
+
+        # 10. Music Beat Probability
+        if self.presence == "quiet" or self.semantic_state != "music":
+            self.beat_probability = 0.0
+        else:
+            low_freq = (bands[0] * 1.3 + bands[1] * 0.7) / 2.0
+            self.low_freq_buf.append(low_freq)
+            if len(self.low_freq_buf) > 75:
+                self.low_freq_buf.pop(0)
+
+            m = sum(self.low_freq_buf) / len(self.low_freq_buf)
+            var = sum((x - m) ** 2 for x in self.low_freq_buf) / len(self.low_freq_buf)
+            std_dev = math.sqrt(var)
+
+            var_factor = max(0.0, min(1.0, (std_dev - 4.0) / 8.0))
+            dt_beat = t - self.last_beat_timestamp if self.last_beat_timestamp > 0 else 99999
+            if dt_beat <= 1500:
+                recency_factor = 1.0
+            elif dt_beat <= 2500:
+                recency_factor = 1.0 - ((dt_beat - 1500) / 1000.0)
+            else:
+                recency_factor = 0.0
+
+            level_factor = max(0.0, min(1.0, (m - 10.0) / 25.0))
+            target_prob = var_factor * (0.6 * recency_factor + 0.4 * level_factor)
+            if recency_factor > 0.5 and var_factor > 0.3:
+                target_prob = max(target_prob, 0.75 + 0.25 * var_factor)
+            target_prob = max(0.0, min(1.0, target_prob))
+
+            self.beat_probability = (self.beat_probability * 0.88) + (target_prob * 0.12)
+            if self.beat_probability < 0.01:
+                self.beat_probability = 0.0
+            if self.beat_probability > 1.0:
+                self.beat_probability = 1.0
 
 
 def format_duration(seconds: float) -> str:
@@ -267,8 +387,8 @@ def main():
     t0 = frames[0]["t"]
     classifier = SimulatedAudioClassifier()
 
-    print(f"{'Time':<8} | {'Level':<6} | {'Floor':<5} | {'Presence':<8} | {'State':<13} | {'Phrase':<9} | {'Conf':<6} | {'Beats':<6}")
-    print("-" * 80)
+    print(f"{'Time':<8} | {'Level':<6} | {'Floor':<5} | {'Presence':<8} | {'State':<13} | {'Phrase':<9} | {'Conf':<6} | {'BPM':<7} | {'Beats':<6}")
+    print("-" * 88)
 
     # Evaluate continuous 1-second benchmark metrics across labeled segments
     segments = meta.get("segments", [])
@@ -288,9 +408,14 @@ def main():
     passed_asserts = 0
     failed_asserts = 0
     failures = []
+    last_raw_t = None
 
     for f in frames:
         raw_t = f["t"]
+        if raw_t == last_raw_t:
+            continue
+        last_raw_t = raw_t
+
         t = raw_t - t0 if raw_t >= t0 else raw_t
         t_sec = t / 1000.0
 
@@ -315,6 +440,8 @@ def main():
                 "phrase": classifier.phrase_state,
                 "conf": classifier.music_confidence,
                 "lvl": classifier.current_level,
+                "bpm": classifier.bpm,
+                "beat_prob": classifier.beat_probability,
             }
             if prev_state is not None and classifier.semantic_state != prev_state:
                 state_flips += 1
@@ -327,6 +454,7 @@ def main():
         if t_sec >= last_report_sec + args.step:
             last_report_sec = t_sec
             conf_bar = "█" * int(classifier.music_confidence * 5)
+            bpm_str = f"{classifier.bpm} BPM" if classifier.bpm > 0 else "-- BPM"
             print(
                 f"{format_duration(t_sec):<8} | "
                 f"{classifier.current_level:5.1f}% | "
@@ -335,6 +463,7 @@ def main():
                 f"{classifier.semantic_state:<13} | "
                 f"{classifier.phrase_state:<9} | "
                 f"{classifier.music_confidence:4.2f} {conf_bar:<5} | "
+                f"{bpm_str:<7} | "
                 f"{len(classifier.beat_times):<6}"
             )
 
@@ -347,6 +476,8 @@ def main():
                 exp_p = a.get("expected_presence")
                 exp_s = a.get("expected_state")
                 exp_ph = a.get("expected_phrase")
+                min_bpm = a.get("min_bpm")
+                max_bpm = a.get("max_bpm")
 
                 errs = []
                 if exp_p and exp_p.lower() != classifier.presence.lower():
@@ -355,6 +486,10 @@ def main():
                     errs.append(f"state expected '{exp_s}', got '{classifier.semantic_state}'")
                 if exp_ph and exp_ph.lower() != classifier.phrase_state.lower():
                     errs.append(f"phrase expected '{exp_ph}', got '{classifier.phrase_state}'")
+                if min_bpm and classifier.bpm < min_bpm:
+                    errs.append(f"bpm expected >= {min_bpm}, got {classifier.bpm}")
+                if max_bpm and classifier.bpm > max_bpm:
+                    errs.append(f"bpm expected <= {max_bpm}, got {classifier.bpm}")
 
                 if errs:
                     failed_asserts += 1
@@ -386,6 +521,20 @@ def main():
                             a["_failed"] = True
                             failed_asserts += 1
                             failures.append(f"[Window: {a.get('description', '')}] at {t_sec:.2f}s: phrase '{classifier.phrase_state}' != '{exp_ph}'")
+                    min_bpm = a.get("min_bpm")
+                    if min_bpm and classifier.bpm < min_bpm:
+                        if not a.get("_failed", False):
+                            a["_failed"] = True
+                            failed_asserts += 1
+                            failures.append(f"[Window: {a.get('description', '')}] at {t_sec:.2f}s: bpm {classifier.bpm} < {min_bpm}")
+                    max_bpm = a.get("max_bpm")
+                    if max_bpm and classifier.bpm > max_bpm:
+                        if not a.get("_failed", False):
+                            a["_failed"] = True
+                            failed_asserts += 1
+                            failures.append(f"[Window: {a.get('description', '')}] at {t_sec:.2f}s: bpm {classifier.bpm} > {max_bpm}")
+                            failed_asserts += 1
+                            failures.append(f"[Window: {a.get('description', '')}] at {t_sec:.2f}s: phrase '{classifier.phrase_state}' != '{exp_ph}'")
 
     # Finalize window assertions
     for a in assertions:
@@ -411,6 +560,9 @@ def main():
         sem_errors = 0.0
         phr_errors = 0.0
         phr_eval_count = 0
+        ground_truth_bpm = float(meta.get("ground_truth_bpm", 0.0))
+        sum_bpm_errors = 0.0
+        bpm_eval_count = 0
         hotspots = []
 
         for sec, snap in sorted(second_snapshots.items()):
@@ -481,9 +633,18 @@ def main():
                 if ph_err >= 0.5:
                     hotspots.append((sec, f"Phrase: expected '{exp_phrase}', got '{actual_phrase}'"))
 
+            # 4. Continuous BPM Error
+            if ground_truth_bpm > 0.0 and exp_phrase not in ("breakdown", "outro"):
+                act_bpm = snap.get("bpm", 0)
+                if act_bpm > 0:
+                    sum_bpm_errors += abs(act_bpm - ground_truth_bpm)
+                    bpm_eval_count += 1
+
         presence_acc = max(0.0, 100.0 * (1.0 - (pres_errors / total_eval_secs)))
         semantic_acc = max(0.0, 100.0 * (1.0 - (sem_errors / total_eval_secs)))
         phrase_acc = max(0.0, 100.0 * (1.0 - (phr_errors / phr_eval_count))) if phr_eval_count > 0 else 100.0
+        bpm_mae = (sum_bpm_errors / bpm_eval_count) if bpm_eval_count > 0 else 0.0
+        bpm_acc = max(0.0, 100.0 * (1.0 - (bpm_mae / 20.0))) if bpm_eval_count > 0 else 100.0
 
         # Stability score: expect roughly len(segments) transitions; penalize excessive flapping
         expected_flips = max(1, len(segments))
@@ -501,6 +662,8 @@ def main():
         print(f"🎶 Semantic State Accuracy:  {semantic_acc:5.1f}%  (Music vs Ambient vs Silence)")
         print(f"🎼 Phrase Alignment Score:   {phrase_acc:5.1f}%  (Verse / Chorus / Breakdown / Outro)")
         print(f"🌊 Stability / Anti-Flap:    {stability_score:5.1f}%  ({state_flips} state flips, {phrase_flips} phrase flips)")
+        if ground_truth_bpm > 0.0:
+            print(f"🎵 BPM Accuracy:             {bpm_acc:5.1f}%  (MAE: {bpm_mae:.1f} BPM, Ground Truth: {ground_truth_bpm} BPM, {bpm_eval_count}s)")
         print("-" * 80)
         print(f"🏆 OVERALL BENCHMARK SCORE:  {overall_score:5.1f}%")
         print("=" * 80)

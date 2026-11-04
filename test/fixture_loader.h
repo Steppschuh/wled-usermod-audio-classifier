@@ -40,6 +40,8 @@ struct FixtureAssertion {
   std::string expectedPresence;
   std::string expectedState;
   std::string expectedPhrase;
+  uint16_t minBpm = 0;
+  uint16_t maxBpm = 0;
   bool fired = false;
 };
 
@@ -90,6 +92,12 @@ public:
       if (a["expected_phrase"].is<std::string>()) {
         fa.expectedPhrase = a["expected_phrase"].as<std::string>();
       }
+      if (a["min_bpm"].is<uint16_t>()) {
+        fa.minBpm = a["min_bpm"].as<uint16_t>();
+      }
+      if (a["max_bpm"].is<uint16_t>()) {
+        fa.maxBpm = a["max_bpm"].as<uint16_t>();
+      }
       assertions.push_back(fa);
     }
 
@@ -110,11 +118,13 @@ public:
     }
 
     std::string primaryLabel = doc["metadata"]["primary_label"] | "silence";
+    float groundTruthBpm = doc["metadata"]["ground_truth_bpm"] | 0.0f;
 
     struct SecondSnap {
       std::string presence;
       std::string state;
       std::string phrase;
+      uint16_t bpm = 0;
     };
     std::map<uint32_t, SecondSnap> snapshots;
     uint32_t lastSnapSec = 999999;
@@ -130,11 +140,15 @@ public:
     }
 
     uint32_t t0 = frames[0]["t"].as<uint32_t>();
+    uint32_t lastRawT = 0xFFFFFFFF;
 
     // Replay frames
     for (JsonObject f : frames) {
-      AudioFrame frame;
       uint32_t rawT = f["t"].as<uint32_t>();
+      if (rawT == lastRawT) continue; // skip duplicate packet
+      lastRawT = rawT;
+
+      AudioFrame frame;
       frame.timestampMs = (rawT >= t0) ? (rawT - t0) : rawT;
       float frameTimeSec = (float)frame.timestampMs / 1000.0f;
 
@@ -161,6 +175,7 @@ public:
         snap.presence = (classifier.getPresence() == SoundPresence::SOUND) ? "sound" : "quiet";
         snap.state = classifier.getSemanticStateStr();
         snap.phrase = classifier.getPhraseStateStr();
+        snap.bpm = classifier.getBPM();
         snapshots[curSec] = snap;
 
         if (!prevState.empty() && snap.state != prevState) stateFlips++;
@@ -198,6 +213,22 @@ public:
               TEST_FAIL_MESSAGE(msg.c_str());
             }
           }
+          if (a.minBpm > 0) {
+            uint16_t actBpm = classifier.getBPM();
+            if (actBpm < a.minBpm) {
+              std::string msg = "Assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
+                                "s: Expected BPM >= " + std::to_string(a.minBpm) + " but got " + std::to_string(actBpm);
+              TEST_FAIL_MESSAGE(msg.c_str());
+            }
+          }
+          if (a.maxBpm > 0) {
+            uint16_t actBpm = classifier.getBPM();
+            if (actBpm > a.maxBpm) {
+              std::string msg = "Assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
+                                "s: Expected BPM <= " + std::to_string(a.maxBpm) + " but got " + std::to_string(actBpm);
+              TEST_FAIL_MESSAGE(msg.c_str());
+            }
+          }
         }
 
         // Window assertion
@@ -228,6 +259,22 @@ public:
                 TEST_FAIL_MESSAGE(msg.c_str());
               }
             }
+            if (a.minBpm > 0) {
+              uint16_t actBpm = classifier.getBPM();
+              if (actBpm < a.minBpm) {
+                std::string msg = "Window assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
+                                  "s: Expected BPM >= " + std::to_string(a.minBpm) + " but got " + std::to_string(actBpm);
+                TEST_FAIL_MESSAGE(msg.c_str());
+              }
+            }
+            if (a.maxBpm > 0) {
+              uint16_t actBpm = classifier.getBPM();
+              if (actBpm > a.maxBpm) {
+                std::string msg = "Window assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
+                                  "s: Expected BPM <= " + std::to_string(a.maxBpm) + " but got " + std::to_string(actBpm);
+                TEST_FAIL_MESSAGE(msg.c_str());
+              }
+            }
           }
         }
       }
@@ -246,6 +293,8 @@ public:
       float presErrors = 0.0f;
       float semErrors = 0.0f;
       float phrErrors = 0.0f;
+      float sumBpmErrors = 0.0f;
+      size_t bpmEvalCount = 0;
       size_t phrEvalCount = 0;
       size_t totalSecs = snapshots.size();
 
@@ -313,12 +362,23 @@ public:
               }
             }
           }
+
+          // Continuous BPM evaluation during active music (excluding quiet breakdown/outro)
+          if (groundTruthBpm > 0.0f && expPhrase != "breakdown" && expPhrase != "outro") {
+            if (snap.bpm > 0) {
+              float err = fabsf((float)snap.bpm - groundTruthBpm);
+              sumBpmErrors += err;
+              bpmEvalCount++;
+            }
+          }
         }
       }
 
       float presAcc = (totalSecs > 0) ? fmaxf(0.0f, 100.0f * (1.0f - (presErrors / (float)totalSecs))) : 100.0f;
       float semAcc = (totalSecs > 0) ? fmaxf(0.0f, 100.0f * (1.0f - (semErrors / (float)totalSecs))) : 100.0f;
       float phrAcc = (phrEvalCount > 0) ? fmaxf(0.0f, 100.0f * (1.0f - (phrErrors / (float)phrEvalCount))) : 100.0f;
+      float bpmMae = (bpmEvalCount > 0) ? (sumBpmErrors / (float)bpmEvalCount) : 0.0f;
+      float bpmAcc = (bpmEvalCount > 0) ? fmaxf(0.0f, 100.0f * (1.0f - (bpmMae / 20.0f))) : 100.0f;
 
       size_t expectedFlips = segments.size();
       size_t excessFlips = ((stateFlips + phraseFlips) > expectedFlips * 2) ? ((stateFlips + phraseFlips) - expectedFlips * 2) : 0;
@@ -328,10 +388,17 @@ public:
 
       std::cout << "\n========================================================================================\n"
                 << "📊 Native Fixture Benchmark Score: " << std::fixed << std::setprecision(1) << overallScore << "%\n"
-                << "   Presence: " << presAcc << "% | Semantic: " << semAcc << "% | Phrase: " << phrAcc << "% | Stability: " << stabilityScore << "%\n"
-                << "========================================================================================\n";
+                << "   Presence: " << presAcc << "% | Semantic: " << semAcc << "% | Phrase: " << phrAcc << "% | Stability: " << stabilityScore << "%\n";
+      if (groundTruthBpm > 0.0f) {
+        std::cout << "   🎵 BPM Accuracy: " << bpmAcc << "% | MAE: " << bpmMae << " BPM (Ground Truth: " << groundTruthBpm << " BPM, Evaluated: " << bpmEvalCount << "s)\n";
+      }
+      std::cout << "========================================================================================\n";
 
       TEST_ASSERT_TRUE_MESSAGE(overallScore >= 75.0f, "Continuous benchmark score dropped below 75% quality threshold!");
+      if (groundTruthBpm > 0.0f) {
+        TEST_ASSERT_TRUE_MESSAGE(bpmAcc >= 80.0f, "Continuous BPM Accuracy dropped below 80%!");
+        TEST_ASSERT_TRUE_MESSAGE(bpmMae <= 4.0f, "Continuous BPM Mean Absolute Error exceeds 4.0 BPM!");
+      }
     }
 
     return true;

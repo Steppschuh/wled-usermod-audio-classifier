@@ -40,6 +40,13 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     macConn.add(chipId);
   };
 
+  // Clear legacy discovery topics to avoid orphaned entities in HA
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_peak/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_state/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_phrase/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_energy/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_bpm/config").c_str(), 0, true, "");
+
   // 1. Relative Audio Level Sensor (%)
   {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
@@ -67,19 +74,19 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
   }
 
-  // 1b. Audio Peak Level Sensor (%)
+  // 1b. Peak Level Sensor (%)
   {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
     StaticJsonDocument<640> doc;
 #endif
-    doc["name"] = "Audio Peak";
+    doc["name"] = "Peak Level";
     doc["stat_t"] = baseTopic + "peak";
     doc["unit_of_meas"] = "%";
     doc["stat_cla"] = "measurement";
     doc["icon"] = "mdi:volume-vibrate";
-    doc["uniq_id"] = chipId + "_audio_peak";
+    doc["uniq_id"] = chipId + "_peak_level";
     doc["avty_t"] = statusTopic;
     doc["pl_avail"] = "online";
     doc["pl_not_avail"] = "offline";
@@ -88,7 +95,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     JsonObject dev = doc.createNestedObject("dev");
     buildDevice(dev);
 
-    String topic = "homeassistant/sensor/" + chipId + "_audio_peak/config";
+    String topic = "homeassistant/sensor/" + chipId + "_peak_level/config";
     String payload;
     serializeJson(doc, payload);
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
@@ -120,22 +127,22 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
   }
 
-  // 3. Audio State Sensor (silence / ambient_noise / music)
+  // 3. Audio Type Sensor (silence / ambient_noise / music)
   {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
     StaticJsonDocument<640> doc;
 #endif
-    doc["name"] = "Audio State";
-    doc["stat_t"] = baseTopic + "state";
+    doc["name"] = "Audio Type";
+    doc["stat_t"] = baseTopic + "type";
     doc["dev_cla"] = "enum";
     JsonArray opts = doc.createNestedArray("options");
     opts.add("silence");
     opts.add("ambient_noise");
     opts.add("music");
     doc["icon"] = "mdi:waveform";
-    doc["uniq_id"] = chipId + "_audio_state";
+    doc["uniq_id"] = chipId + "_audio_type";
     doc["avty_t"] = statusTopic;
     doc["pl_avail"] = "online";
     doc["pl_not_avail"] = "offline";
@@ -143,7 +150,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     JsonObject dev = doc.createNestedObject("dev");
     buildDevice(dev);
 
-    String topic = "homeassistant/sensor/" + chipId + "_audio_state/config";
+    String topic = "homeassistant/sensor/" + chipId + "_audio_type/config";
     String payload;
     serializeJson(doc, payload);
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
@@ -174,14 +181,14 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
   }
 
-  // 5. Audio Phrase Sensor (Optional / Experimental)
+  // 5. Music Phrase Sensor (Optional / Experimental)
   if (experimentalEnabled) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
     StaticJsonDocument<640> doc;
 #endif
-    doc["name"] = "Audio Phrase";
+    doc["name"] = "Music Phrase";
     doc["stat_t"] = baseTopic + "phrase";
     doc["dev_cla"] = "enum";
     JsonArray opts = doc.createNestedArray("options");
@@ -192,8 +199,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     opts.add("breakdown");
     opts.add("outro");
     doc["icon"] = "mdi:music-note-eighth";
-    doc["entity_category"] = "diagnostic";
-    doc["uniq_id"] = chipId + "_audio_phrase";
+    doc["uniq_id"] = chipId + "_music_phrase";
     doc["avty_t"] = statusTopic;
     doc["pl_avail"] = "online";
     doc["pl_not_avail"] = "offline";
@@ -201,25 +207,25 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     JsonObject dev = doc.createNestedObject("dev");
     buildDevice(dev);
 
-    String topic = "homeassistant/sensor/" + chipId + "_audio_phrase/config";
+    String topic = "homeassistant/sensor/" + chipId + "_music_phrase/config";
     String payload;
     serializeJson(doc, payload);
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
   }
 
-  // 6. Audio Energy Sensor (0-100%)
+  // 6. Music Energy Sensor (0-100%)
   if (experimentalEnabled) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
     StaticJsonDocument<640> doc;
 #endif
-    doc["name"] = "Audio Energy";
+    doc["name"] = "Music Energy";
     doc["stat_t"] = baseTopic + "energy";
     doc["unit_of_meas"] = "%";
     doc["stat_cla"] = "measurement";
     doc["icon"] = "mdi:lightning-bolt";
-    doc["uniq_id"] = chipId + "_audio_energy";
+    doc["uniq_id"] = chipId + "_music_energy";
     doc["avty_t"] = statusTopic;
     doc["pl_avail"] = "online";
     doc["pl_not_avail"] = "offline";
@@ -228,25 +234,25 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     JsonObject dev = doc.createNestedObject("dev");
     buildDevice(dev);
 
-    String topic = "homeassistant/sensor/" + chipId + "_audio_energy/config";
+    String topic = "homeassistant/sensor/" + chipId + "_music_energy/config";
     String payload;
     serializeJson(doc, payload);
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
   }
 
-  // 7. Audio BPM Sensor
+  // 7. BPM Sensor
   if (experimentalEnabled) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
     StaticJsonDocument<640> doc;
 #endif
-    doc["name"] = "Audio BPM";
+    doc["name"] = "BPM";
     doc["stat_t"] = baseTopic + "bpm";
     doc["unit_of_meas"] = "bpm";
     doc["stat_cla"] = "measurement";
     doc["icon"] = "mdi:metronome";
-    doc["uniq_id"] = chipId + "_audio_bpm";
+    doc["uniq_id"] = chipId + "_bpm";
     doc["avty_t"] = statusTopic;
     doc["pl_avail"] = "online";
     doc["pl_not_avail"] = "offline";
@@ -255,7 +261,33 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     JsonObject dev = doc.createNestedObject("dev");
     buildDevice(dev);
 
-    String topic = "homeassistant/sensor/" + chipId + "_audio_bpm/config";
+    String topic = "homeassistant/sensor/" + chipId + "_bpm/config";
+    String payload;
+    serializeJson(doc, payload);
+    mqtt->publish(topic.c_str(), 0, true, payload.c_str());
+  }
+
+  // 8. Music Beat Probability Sensor (0.00 - 1.00)
+  if (experimentalEnabled) {
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+    JsonDocument doc;
+#else
+    StaticJsonDocument<640> doc;
+#endif
+    doc["name"] = "Music Beat Probability";
+    doc["stat_t"] = baseTopic + "beat_probability";
+    doc["stat_cla"] = "measurement";
+    doc["icon"] = "mdi:drum";
+    doc["uniq_id"] = chipId + "_music_beat_probability";
+    doc["avty_t"] = statusTopic;
+    doc["pl_avail"] = "online";
+    doc["pl_not_avail"] = "offline";
+    doc["expire_after"] = 90;
+
+    JsonObject dev = doc.createNestedObject("dev");
+    buildDevice(dev);
+
+    String topic = "homeassistant/sensor/" + chipId + "_music_beat_probability/config";
     String payload;
     serializeJson(doc, payload);
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
@@ -267,15 +299,21 @@ void HomeAssistantAudioDiscovery::removeDiscovery(bool experimentalEnabled) {
   String chipId = String(escapedMac);
 
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_level/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_peak_level/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_peak/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/binary_sensor/" + chipId + "_audio_sound/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/binary_sensor/" + chipId + "_audio_detected/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_type/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_state/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_status/config").c_str(), 0, true, "");
   if (experimentalEnabled) {
+    mqtt->publish(("homeassistant/sensor/" + chipId + "_music_phrase/config").c_str(), 0, true, "");
     mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_phrase/config").c_str(), 0, true, "");
+    mqtt->publish(("homeassistant/sensor/" + chipId + "_music_energy/config").c_str(), 0, true, "");
     mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_energy/config").c_str(), 0, true, "");
+    mqtt->publish(("homeassistant/sensor/" + chipId + "_bpm/config").c_str(), 0, true, "");
     mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_bpm/config").c_str(), 0, true, "");
+    mqtt->publish(("homeassistant/sensor/" + chipId + "_music_beat_probability/config").c_str(), 0, true, "");
   }
 }
 
@@ -337,12 +375,17 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
     snprintf(bpmBuf, sizeof(bpmBuf), "%u", bpm);
     mqtt->publish((base + "bpm").c_str(), 0, false, bpmBuf);
 
+    char probBuf[16];
+    snprintf(probBuf, sizeof(probBuf), "%.2f", classifier.getBeatProbability());
+    mqtt->publish((base + "beat_probability").c_str(), 0, false, probBuf);
+
     lastPubTime = now;
   }
 
   if (force || stateChanged || timeForHeartbeat) {
     mqtt->publish((base + "detected").c_str(), 0, false, soundState ? "ON" : "OFF");
     mqtt->publish((base + "sound").c_str(), 0, false, soundState ? "ON" : "OFF");
+    mqtt->publish((base + "type").c_str(), 0, false, classifier.getSemanticStateStr());
     mqtt->publish((base + "state").c_str(), 0, false, classifier.getSemanticStateStr());
     mqtt->publish((base + "phrase").c_str(), 0, false, classifier.getPhraseStateStr());
     mqtt->publish((base + "status").c_str(), 0, false, source.getStatusDescription());

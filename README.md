@@ -36,12 +36,13 @@ When MQTT is connected, the following entities appear automatically under your W
 | Entity Name | Domain | Type | Values / Unit | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | **`Audio Level`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second RMS average sound volume (updated at 1 Hz). |
-| **`Audio Peak`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second maximum sound peak (updated at 1 Hz). |
+| **`Peak Level`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second maximum sound peak (updated at 1 Hz). |
 | **`Audio Detected`** | `binary_sensor` | `sound` | `ON` / `OFF` | Debounced presence indicator for active sound in the room. |
-| **`Audio State`** | `sensor` | `enum` | `silence`, `ambient_noise`, `music` | Contextual room acoustic state. |
-| **`Audio Energy`** | `sensor` | Measurement | `0` – `100 %` | Dynamic track & acoustic energy level (0%: silence, 10%: noise, 30%: outro, 40%: breakdown, 50%: buildup, 60%: intro, 80%: verse, 100%: chorus). |
-| **`Audio BPM`** | `sensor` | Measurement | `60` – `240 bpm` | Detected musical tempo / rhythm speed (when `experimental-music` is enabled). |
-| **`Audio Phrase`** | `sensor` | Diagnostic | `intro`, `verse`, `buildup`, `chorus`, `breakdown`, `outro` | Musical phrasing and song structure state (when `experimental-music` is enabled). |
+| **`Audio Type`** | `sensor` | `enum` | `silence`, `ambient_noise`, `music` | Contextual room acoustic state. |
+| **`Music Energy`** | `sensor` | Measurement | `0` – `100 %` | Dynamic track & acoustic energy level (0%: silence, 10%: noise, 30%: outro, 40%: breakdown, 50%: buildup, 60%: intro, 80%: verse, 100%: chorus). |
+| **`BPM`** | `sensor` | Measurement | `60` – `240 bpm` | Detected musical tempo / rhythm speed (when `experimental-music` is enabled). |
+| **`Music Beat Probability`** | `sensor` | Measurement | `0.00` – `1.00` | Real-time beat presence probability based on low-frequency variance (0.00 = silence/noise/ambient, 1.00 = active bass/beat). |
+| **`Music Phrase`** | `sensor` | `enum` | `intro`, `verse`, `buildup`, `chorus`, `breakdown`, `outro` | Musical phrasing and song structure state (when `experimental-music` is enabled). |
 | **`Audio Source Status`** | `sensor` | Diagnostic | Text | Live coupling health with AudioReactive and microphone stream. |
 
 ---
@@ -170,9 +171,10 @@ Topics derive from WLED's configured MQTT Device Topic (`wled/<mac>`):
 | `<device>/audio/level` | Float (`24.5`) | 1 Hz + Heartbeat | 1-second RMS average sound percentage |
 | `<device>/audio/peak` | Float (`45.2`) | 1 Hz + Heartbeat | 1-second maximum sound peak percentage |
 | `<device>/audio/detected` | `ON` / `OFF` | On change + Heartbeat | Debounced sound presence (also mirrored to `audio/sound`) |
-| `<device>/audio/state` | String (`silence`, `ambient_noise`, `music`) | On change + Heartbeat | Semantic acoustic state |
+| `<device>/audio/type` | String (`silence`, `ambient_noise`, `music`) | On change + Heartbeat | Semantic acoustic type (also mirrored to `audio/state`) |
 | `<device>/audio/energy` | Integer (`0` – `100 %`) | 1 Hz + On change + Heartbeat | Track acoustic energy percentage |
 | `<device>/audio/bpm` | Integer (`128`) | 1 Hz + On change + Heartbeat | Detected rhythm speed (BPM) |
+| `<device>/audio/beat_probability` | Float (`0.00` – `1.00`) | 1 Hz + Heartbeat | Beat presence probability based on low-frequency variance |
 | `<device>/audio/phrase` | String (`intro`, `verse`, `buildup`, `chorus`, `breakdown`, `outro`) | On change + Heartbeat | Phrasing state (if enabled) |
 | `<device>/audio/status` | String (diagnostic message) | On change + Heartbeat | AudioReactive coupling state |
 
