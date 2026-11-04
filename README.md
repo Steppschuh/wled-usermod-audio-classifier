@@ -43,20 +43,6 @@ When MQTT is connected, the following entities appear automatically under your W
 
 ---
 
-## 🛠️ Supported Hardware
-
-| Hardware | Status | Microphone Type | Pin Configuration |
-| :--- | :---: | :--- | :--- |
-| **Gledopto GL-C-015WL-D** | 🟢 Tested | Built-in I2S MEMS | Handled by AudioReactive (`SD: 26`, `WS: 5`, `SCK: 21`) |
-| **Gledopto GL-C-010WL** | 🟢 Supported | Built-in I2S MEMS | Handled by AudioReactive (`SD: 26`, `WS: 5`, `SCK: 21`) |
-| **ESP32 + INMP441** | 🟢 Tested | Digital I2S Breakout | Configure in AudioReactive (e.g. `SD: 32`, `WS: 15`, `SCK: 14`). Connect L/R to GND, power with 3.3V only! |
-| **ESP32 + SPH0645** | 🟢 Supported | Digital I2S Breakout | Select `SPH0645` in AudioReactive settings |
-| **ESP32-S3 + I2S / PDM** | 🟢 Supported | Digital I2S / PDM | Fully supported via AudioReactive |
-
-> **Note**: Audio hardware pins are managed entirely by `AudioReactive`. You do **not** configure GPIO pins in AudioClassifier.
-
----
-
 ## 🚀 Installation & Flashing
 
 Pre-compiled binaries are available on the **[Releases](https://github.com/Steppschuh/wled-usermod-audio-classifier/releases)** page.
@@ -97,7 +83,22 @@ pio run -e esp32dev -t upload
 
 ## ⚙️ Configuration & Tuning
 
-### 1. AudioReactive Settings
+### 1. AudioClassifier Usermod Settings
+Configure under **Config > Usermods > AudioClassifier**:
+
+| Setting | Default | Description |
+| :--- | :--- | :--- |
+| **`Enabled`** | `true` | Master toggle for audio classification. |
+| **`MQTT Auto-Discovery`** | `true` | Automatically publish Home Assistant MQTT discovery entities. |
+| **`Quiet Threshold`** | `6.0 %` | Absolute silence cutoff floor. |
+| **`Margin Above Floor`** | `4.0 %` | Trigger margin required above ambient noise floor. |
+| **`On Delay`** | `1200 ms` | Continuous sound duration required before triggering presence. |
+| **`Off Delay`** | `8000 ms` | Continuous silence duration required before clearing presence. |
+| **`Music Hold`** | `20000 ms` | Hold time in music state during quiet bridges/breakdowns. |
+| **`Experimental Music`** | `false` | Enable beat regularity and musical phrasing tracking (`steady`, `buildup`, `breakdown`, `drop`). |
+| **`Stream Raw`** | `false` | Stream raw audio frames over MQTT (`wled/<device>/audio/raw`) for analysis. |
+
+### 2. AudioReactive Settings
 Open **Config > Usermods > AudioReactive** to configure the audio input stage:
 
 | Setting | Recommended | Meaning & Impact |
@@ -115,21 +116,6 @@ The info modal (ℹ️) and Home Assistant report coupling health:
 - `Info: AudioReactive is in network receive mode`: Audio telemetry is streamed from another WLED instance.
 - `Warning: No audio signal detected from AudioReactive (>30s)`: Check microphone hardware wiring.
 - `Error: AudioReactive usermod not present in build`: Ensure firmware includes AudioReactive.
-
-### 2. AudioClassifier Usermod Settings
-Configure under **Config > Usermods > AudioClassifier**:
-
-| Setting | Type | Default | Unit | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| **`enabled`** | bool | `true` | — | Master toggle for audio classification. |
-| **`mqtt-auto-discovery`** | bool | `true` | — | Automatically publish Home Assistant MQTT discovery entities. |
-| **`quiet-threshold`** | float | `6.0` | `%` | Absolute silence cutoff floor. |
-| **`margin-above-floor`** | float | `4.0` | `%` | Trigger margin required above ambient noise floor. |
-| **`on-delay`** | int | `1200` | `ms` | Continuous sound duration required before triggering presence. |
-| **`off-delay`** | int | `8000` | `ms` | Continuous silence duration required before clearing presence. |
-| **`music-hold`** | int | `20000` | `ms` | Hold time in music state during quiet bridges/breakdowns. |
-| **`experimental-music`** | bool | `false` | — | Enable beat regularity and musical phrasing tracking (`steady`, `buildup`, `breakdown`, `drop`). |
-| **`stream-raw`** | bool | `false` | — | Stream raw audio frames over MQTT (`wled/<device>/audio/raw`) for analysis. |
 
 ### 3. Step-by-Step Calibration Guide
 
@@ -155,10 +141,10 @@ Follow this 3-step procedure using WLED's live status readouts (in the **Info mo
 #### Step 3: Set AudioClassifier Thresholds
 1. With Squelch and Gain dialed in, observe the resting room baseline with normal background sounds (HVAC, fans) running (e.g. `2.5%`).
 2. In **Config > Usermods > AudioClassifier**:
-   * Set **`quiet-threshold`** to **~2% – 3% above** your quiet room baseline (e.g. `5.0%` for a `2.5%` baseline).
-   * Leave **`margin-above-floor`** at `4.0%` (sound must rise 4% above the rolling ambient floor to trigger).
-   * If brief transient noises (footfalls, closing doors) trigger presence, increase **`on-delay`** (`1500`–`2000 ms`).
-   * If presence clears during quiet song bridges or pauses between tracks, increase **`off-delay`** (`10000`–`15000 ms`).
+   * Set **`Quiet Threshold`** to **~2% – 3% above** your quiet room baseline (e.g. `5.0%` for a `2.5%` baseline).
+   * Leave **`Margin Above Floor`** at `4.0%` (sound must rise 4% above the rolling ambient floor to trigger).
+   * If brief transient noises (footfalls, closing doors) trigger presence, increase **`On Delay`** (`1500`–`2000 ms`).
+   * If presence clears during quiet song bridges or pauses between tracks, increase **`Off Delay`** (`10000`–`15000 ms`).
 
 #### Quick Troubleshooting
 
@@ -190,33 +176,6 @@ Topics derive from WLED's configured MQTT Device Topic (`wled/<mac>`):
 ---
 
 ## 🧩 Architecture & Technical Design
-
-```mermaid
-flowchart TD
-    subgraph Microphone ["Acoustic Input"]
-        MIC[("I2S / PDM Digital MEMS Mic")]
-    end
-
-    subgraph WLED_AR ["WLED Core & AudioReactive"]
-        MIC -->|I2S DMA Stream| AR_CORE["AudioReactive Usermod\n• DMA acquisition\n• 512-sample FFT @ 22kHz\n• 16-band GEQ filter & peak detection"]
-        AR_CORE -->|Fast LED Buffer| LEDS["WLED Light Engine / NeoPixels\n(Audio-Reactive Visual Effects)"]
-    end
-
-    subgraph AudioClassifier ["Audio Classifier Usermod"]
-        AR_CORE -->|getUMData API| AR_SRC["AudioReactiveSource\n(Extracts volumeRaw, bands, peak, freq)"]
-        AR_SRC --> FRAME["AudioFrame\n(Normalized relative level & 16-band energy)"]
-        
-        FRAME --> CLASSIFIER["AudioClassifier State Machine\n• Dynamic 10th-percentile noise floor (5min ring)\n• Noise floor freezing during active sound\n• Configurable On/Off debouncing\n• Beat regularity & Phrasing evaluation"]
-        
-        CLASSIFIER --> HA_DISCOVERY["HomeAssistantAudioDiscovery\n• Formats ArduinoJson discovery payloads\n• Links to parent WLED device via MAC\n• Emits state changes & 1Hz telemetry"]
-    end
-
-    subgraph HomeAssistant ["Smart Home Ecosystem"]
-        HA_DISCOVERY -->|MQTT Auto-Discovery| MQTT_BROKER["MQTT Broker (Mosquitto)"]
-        MQTT_BROKER --> HA["Home Assistant\n• sensor.sound_level (%)\n• binary_sensor.sound_detected\n• sensor.audio_state\n• sensor.audio_status\n• sensor.music_phrase"]
-        HA --> AUTOMATIONS["Automations & Scenes\n(Lighting, media control, noise alerts)"]
-    end
-```
 
 ### Noise Floor Estimation & Stability
 Simple moving-average baselines suffer from **baseline creep**: continuous music or conversation gradually inflates the baseline, causing the system to classify ongoing sound as ambient room silence.
