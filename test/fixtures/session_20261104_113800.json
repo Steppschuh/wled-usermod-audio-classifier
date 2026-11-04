@@ -11,42 +11,65 @@
       {
         "start_sec": 0.0,
         "end_sec": 13.0,
-        "phrase": "chorus"
+        "state": "music",
+        "phrase": "chorus",
+        "description": "Drop / Chorus 1: Heavy 150 BPM beat, 45-55% vol, strong bass"
       },
       {
         "start_sec": 13.0,
         "end_sec": 26.0,
-        "phrase": "breakdown"
+        "state": "music",
+        "phrase": "breakdown",
+        "description": "Breakdown 1: Level drops to 0-3%, kick silent, quiet synth pad"
       },
       {
-        "start_sec": 27.0,
+        "start_sec": 26.0,
         "end_sec": 39.0,
-        "phrase": "chorus"
+        "state": "music",
+        "phrase": "chorus",
+        "description": "Drop / Chorus 2: Beat returns at 00:26/27, volume 55%"
       },
       {
-        "start_sec": 40.0,
+        "start_sec": 39.0,
+        "end_sec": 52.0,
+        "state": "music",
+        "phrase": "verse",
+        "description": "Verse 1: Steady driving beat (~45% vol)"
+      },
+      {
+        "start_sec": 52.0,
         "end_sec": 56.0,
-        "phrase": "verse"
+        "state": "music",
+        "phrase": "buildup",
+        "description": "Snare roll / mini buildup (volume dips to 1-17%)"
       },
       {
-        "start_sec": 57.0,
+        "start_sec": 56.0,
         "end_sec": 78.0,
-        "phrase": "chorus"
+        "state": "music",
+        "phrase": "chorus",
+        "description": "Drop / Chorus 3: Peak energy chorus (~60% vol)"
       },
       {
-        "start_sec": 79.0,
+        "start_sec": 78.0,
         "end_sec": 107.0,
-        "phrase": "breakdown"
+        "state": "music",
+        "phrase": "breakdown",
+        "description": "Major Breakdown 2: 28-second atmospheric breakdown (0-5% vol)"
       },
       {
-        "start_sec": 108.0,
+        "start_sec": 107.0,
         "end_sec": 146.0,
-        "phrase": "chorus"
+        "state": "music",
+        "phrase": "chorus",
+        "description": "Drop / Chorus 4: Massive drop return at 01:47/48 (~60% vol)"
       },
       {
-        "start_sec": 147.0,
+        "start_sec": 146.0,
         "end_sec": 180.0,
-        "phrase": "outro"
+        "state": "music",
+        "phrase": "outro",
+        "description": "Outro: Track ends at 02:27, volume dies down to 0-4%"
       }
     ],
     "assertions": [

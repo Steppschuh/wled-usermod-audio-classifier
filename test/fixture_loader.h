@@ -7,9 +7,30 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <map>
+#include <cmath>
+#include <iomanip>
 #include <iostream>
 #include <unity.h>
 #include "classifier.h"
+
+struct TrackSegment {
+  float startSec = 0.0f;
+  float endSec = 0.0f;
+  std::string state;
+  std::string phrase;
+};
+
+struct BenchmarkScore {
+  float overallScore = 0.0f;
+  float presenceAccuracy = 0.0f;
+  float semanticAccuracy = 0.0f;
+  float phraseAlignmentScore = 0.0f;
+  float stabilityScore = 0.0f;
+  size_t evaluatedSeconds = 0;
+  size_t stateFlips = 0;
+  size_t phraseFlips = 0;
+};
 
 struct FixtureAssertion {
   std::string description;
@@ -72,6 +93,36 @@ public:
       assertions.push_back(fa);
     }
 
+    // Parse segments
+    std::vector<TrackSegment> segments;
+    std::vector<float> boundaries;
+    if (doc["metadata"]["segments"].is<JsonArray>()) {
+      for (JsonObject s : doc["metadata"]["segments"].as<JsonArray>()) {
+        TrackSegment ts;
+        ts.startSec = s["start_sec"] | 0.0f;
+        ts.endSec = s["end_sec"] | 0.0f;
+        ts.state = s["state"] | "music";
+        ts.phrase = s["phrase"] | "verse";
+        segments.push_back(ts);
+        boundaries.push_back(ts.startSec);
+        boundaries.push_back(ts.endSec);
+      }
+    }
+
+    std::string primaryLabel = doc["metadata"]["primary_label"] | "silence";
+
+    struct SecondSnap {
+      std::string presence;
+      std::string state;
+      std::string phrase;
+    };
+    std::map<uint32_t, SecondSnap> snapshots;
+    uint32_t lastSnapSec = 999999;
+    size_t stateFlips = 0;
+    size_t phraseFlips = 0;
+    std::string prevState = "";
+    std::string prevPhrase = "";
+
     JsonArray frames = doc["frames"].as<JsonArray>();
     if (frames.size() == 0) {
       TEST_FAIL_MESSAGE("Fixture contains no frames!");
@@ -102,6 +153,21 @@ public:
 
       // Process frame through classifier
       classifier.processFrame(frame);
+
+      uint32_t curSec = frame.timestampMs / 1000;
+      if (curSec != lastSnapSec) {
+        lastSnapSec = curSec;
+        SecondSnap snap;
+        snap.presence = (classifier.getPresence() == SoundPresence::SOUND) ? "sound" : "quiet";
+        snap.state = classifier.getSemanticStateStr();
+        snap.phrase = classifier.getPhraseStateStr();
+        snapshots[curSec] = snap;
+
+        if (!prevState.empty() && snap.state != prevState) stateFlips++;
+        if (!prevPhrase.empty() && snap.phrase != prevPhrase) phraseFlips++;
+        prevState = snap.state;
+        prevPhrase = snap.phrase;
+      }
 
       // Evaluate assertions
       for (auto& a : assertions) {
@@ -173,6 +239,99 @@ public:
         std::string msg = "Assertion never evaluated (time beyond fixture duration?): " + a.description;
         TEST_FAIL_MESSAGE(msg.c_str());
       }
+    }
+
+    // Evaluate continuous benchmark score if segments are present
+    if (!segments.empty() && !snapshots.empty()) {
+      float presErrors = 0.0f;
+      float semErrors = 0.0f;
+      float phrErrors = 0.0f;
+      size_t phrEvalCount = 0;
+      size_t totalSecs = snapshots.size();
+
+      for (const auto& kv : snapshots) {
+        uint32_t sec = kv.first;
+        const auto& snap = kv.second;
+
+        // Find expected segment
+        std::string expState = primaryLabel;
+        std::string expPhrase = "steady";
+        for (const auto& seg : segments) {
+          if (sec >= (uint32_t)seg.startSec && sec < (uint32_t)seg.endSec) {
+            expState = seg.state;
+            expPhrase = seg.phrase;
+            break;
+          }
+        }
+        std::string expPres = (expState == "silence") ? "quiet" : "sound";
+
+        // Boundary slack window (+/- 1.5s)
+        bool inSlack = false;
+        for (float b : boundaries) {
+          if (fabsf((float)sec - b) <= 1.5f) {
+            inSlack = true;
+            break;
+          }
+        }
+
+        // Presence penalty
+        if (snap.presence != expPres) {
+          if (!inSlack) presErrors += 1.0f;
+        }
+
+        // Semantic penalty
+        if (snap.state != expState) {
+          if (!inSlack) {
+            if ((expState == "music" && snap.state == "silence") || (expState == "silence" && snap.state == "music")) {
+              semErrors += 1.0f;
+            } else if ((expState == "music" && snap.state == "ambient_noise") || (expState == "ambient_noise" && snap.state == "music")) {
+              semErrors += 0.8f;
+            } else if ((expState == "silence" || expState == "ambient_noise") && (snap.state == "silence" || snap.state == "ambient_noise")) {
+              semErrors += 0.25f;
+            } else {
+              semErrors += 0.5f;
+            }
+          }
+        }
+
+        // Phrase penalty
+        if (expState == "music") {
+          phrEvalCount++;
+          if (snap.phrase != expPhrase) {
+            if (!inSlack) {
+              if ((expPhrase == "verse" && snap.phrase == "chorus") || (expPhrase == "chorus" && snap.phrase == "verse")) {
+                phrErrors += 0.25f;
+              } else if ((expPhrase == "breakdown" || expPhrase == "outro") && (snap.phrase == "breakdown" || snap.phrase == "outro")) {
+                phrErrors += 0.20f;
+              } else if (expPhrase == "buildup" || snap.phrase == "buildup") {
+                phrErrors += 0.25f;
+              } else if ((expPhrase == "chorus" && (snap.phrase == "breakdown" || snap.phrase == "outro")) ||
+                         ((expPhrase == "breakdown" || expPhrase == "outro") && snap.phrase == "chorus")) {
+                phrErrors += 1.0f;
+              } else {
+                phrErrors += 0.50f;
+              }
+            }
+          }
+        }
+      }
+
+      float presAcc = (totalSecs > 0) ? fmaxf(0.0f, 100.0f * (1.0f - (presErrors / (float)totalSecs))) : 100.0f;
+      float semAcc = (totalSecs > 0) ? fmaxf(0.0f, 100.0f * (1.0f - (semErrors / (float)totalSecs))) : 100.0f;
+      float phrAcc = (phrEvalCount > 0) ? fmaxf(0.0f, 100.0f * (1.0f - (phrErrors / (float)phrEvalCount))) : 100.0f;
+
+      size_t expectedFlips = segments.size();
+      size_t excessFlips = ((stateFlips + phraseFlips) > expectedFlips * 2) ? ((stateFlips + phraseFlips) - expectedFlips * 2) : 0;
+      float stabilityScore = fmaxf(0.0f, 100.0f - ((float)excessFlips * 2.5f));
+
+      float overallScore = (0.35f * semAcc) + (0.25f * presAcc) + (0.25f * phrAcc) + (0.15f * stabilityScore);
+
+      std::cout << "\n========================================================================================\n"
+                << "📊 Native Fixture Benchmark Score: " << std::fixed << std::setprecision(1) << overallScore << "%\n"
+                << "   Presence: " << presAcc << "% | Semantic: " << semAcc << "% | Phrase: " << phrAcc << "% | Stability: " << stabilityScore << "%\n"
+                << "========================================================================================\n";
+
+      TEST_ASSERT_TRUE_MESSAGE(overallScore >= 75.0f, "Continuous benchmark score dropped below 75% quality threshold!");
     }
 
     return true;

@@ -270,6 +270,20 @@ def main():
     print(f"{'Time':<8} | {'Level':<6} | {'Floor':<5} | {'Presence':<8} | {'State':<13} | {'Phrase':<9} | {'Conf':<6} | {'Beats':<6}")
     print("-" * 80)
 
+    # Evaluate continuous 1-second benchmark metrics across labeled segments
+    segments = meta.get("segments", [])
+    boundaries = []
+    for seg in segments:
+        boundaries.append(seg.get("start_sec", 0.0))
+        boundaries.append(seg.get("end_sec", 0.0))
+
+    second_snapshots = {}
+    prev_state = None
+    prev_phrase = None
+    state_flips = 0
+    phrase_flips = 0
+
+    last_snap_sec = -1
     last_report_sec = -1.0
     passed_asserts = 0
     failed_asserts = 0
@@ -291,6 +305,23 @@ def main():
         bands = f.get("bands", [0] * 16)
 
         classifier.process_frame(t, lvl, raw, smth, pk, hz, mag, bands)
+
+        cur_sec = int(t_sec)
+        if cur_sec != last_snap_sec:
+            last_snap_sec = cur_sec
+            second_snapshots[cur_sec] = {
+                "presence": classifier.presence,
+                "state": classifier.semantic_state,
+                "phrase": classifier.phrase_state,
+                "conf": classifier.music_confidence,
+                "lvl": classifier.current_level,
+            }
+            if prev_state is not None and classifier.semantic_state != prev_state:
+                state_flips += 1
+            if prev_phrase is not None and classifier.phrase_state != prev_phrase:
+                phrase_flips += 1
+            prev_state = classifier.semantic_state
+            prev_phrase = classifier.phrase_state
 
         # Print periodic timeline row
         if t_sec >= last_report_sec + args.step:
@@ -367,10 +398,123 @@ def main():
         for f in failures:
             print(f"  ❌ {f}")
         print(f"\n❌ FAILED: {failed_asserts} failed, {passed_asserts} passed.")
-        sys.exit(1)
     else:
         print(f"  ✅ All {passed_asserts} assertion checkpoints PASSED!")
         print(f"  Overall classification matches: '{meta.get('primary_label')}'\n")
+
+    # =========================================================================
+    # Continuous Benchmark Scoring & Error Metric Evaluation
+    # =========================================================================
+    if second_snapshots:
+        total_eval_secs = len(second_snapshots)
+        pres_errors = 0.0
+        sem_errors = 0.0
+        phr_errors = 0.0
+        phr_eval_count = 0
+        hotspots = []
+
+        for sec, snap in sorted(second_snapshots.items()):
+            # Find segment matching this second
+            matching_seg = None
+            for seg in segments:
+                if seg.get("start_sec", 0.0) <= sec < seg.get("end_sec", 0.0):
+                    matching_seg = seg
+                    break
+
+            if matching_seg:
+                exp_state = matching_seg.get("state", "music").lower()
+                exp_phrase = matching_seg.get("phrase", "verse").lower()
+            else:
+                exp_state = meta.get("primary_label", "silence").lower()
+                exp_phrase = "steady"
+
+            exp_presence = "quiet" if exp_state == "silence" else "sound"
+
+            # Check if within slack window (1.5s) of any segment boundary
+            in_slack = any(abs(sec - b) <= 1.5 for b in boundaries)
+
+            # 1. Presence Error
+            actual_pres = snap["presence"].lower()
+            if actual_pres != exp_presence:
+                p_err = 0.0 if in_slack else 1.0
+                pres_errors += p_err
+
+            # 2. Semantic Error
+            actual_state = snap["state"].lower()
+            if actual_state != exp_state:
+                if in_slack:
+                    s_err = 0.0
+                elif (exp_state == "music" and actual_state == "silence") or (exp_state == "silence" and actual_state == "music"):
+                    s_err = 1.0
+                elif (exp_state == "music" and actual_state == "ambient_noise") or (exp_state == "ambient_noise" and actual_state == "music"):
+                    s_err = 0.8
+                elif exp_state in ("silence", "ambient_noise") and actual_state in ("silence", "ambient_noise"):
+                    s_err = 0.25
+                else:
+                    s_err = 0.5
+                sem_errors += s_err
+                if s_err >= 0.5:
+                    hotspots.append((sec, f"State: expected '{exp_state}', got '{actual_state}'"))
+
+            # 3. Phrase Error (evaluated during music)
+            actual_phrase = snap["phrase"].lower()
+            if exp_state == "music":
+                phr_eval_count += 1
+                if actual_phrase == exp_phrase:
+                    ph_err = 0.0
+                elif in_slack:
+                    ph_err = 0.0
+                else:
+                    # Close energy family
+                    if (exp_phrase, actual_phrase) in [("verse", "chorus"), ("chorus", "verse")]:
+                        ph_err = 0.25
+                    elif exp_phrase in ("breakdown", "outro") and actual_phrase in ("breakdown", "outro"):
+                        ph_err = 0.20
+                    elif exp_phrase == "buildup" or actual_phrase == "buildup":
+                        ph_err = 0.25
+                    elif (exp_phrase == "chorus" and actual_phrase in ("breakdown", "outro")) or \
+                         (exp_phrase in ("breakdown", "outro") and actual_phrase == "chorus"):
+                        ph_err = 1.0
+                    else:
+                        ph_err = 0.50
+                phr_errors += ph_err
+                if ph_err >= 0.5:
+                    hotspots.append((sec, f"Phrase: expected '{exp_phrase}', got '{actual_phrase}'"))
+
+        presence_acc = max(0.0, 100.0 * (1.0 - (pres_errors / total_eval_secs)))
+        semantic_acc = max(0.0, 100.0 * (1.0 - (sem_errors / total_eval_secs)))
+        phrase_acc = max(0.0, 100.0 * (1.0 - (phr_errors / phr_eval_count))) if phr_eval_count > 0 else 100.0
+
+        # Stability score: expect roughly len(segments) transitions; penalize excessive flapping
+        expected_flips = max(1, len(segments))
+        excess_flips = max(0, (state_flips + phrase_flips) - expected_flips * 2)
+        stability_score = max(0.0, 100.0 - (excess_flips * 2.5))
+
+        # Overall composite benchmark score (0% - 100%)
+        overall_score = (0.35 * semantic_acc) + (0.25 * presence_acc) + (0.25 * phrase_acc) + (0.15 * stability_score)
+
+        print("=" * 80)
+        print("📊 CONTINUOUS BENCHMARK EVALUATION & ACCURACY METRICS")
+        print("=" * 80)
+        print(f"⏱️  Evaluated Timeline:      {total_eval_secs} seconds (1 Hz continuous grid)")
+        print(f"🎯 Presence Accuracy:        {presence_acc:5.1f}%  (Sound vs Quiet detection)")
+        print(f"🎶 Semantic State Accuracy:  {semantic_acc:5.1f}%  (Music vs Ambient vs Silence)")
+        print(f"🎼 Phrase Alignment Score:   {phrase_acc:5.1f}%  (Verse / Chorus / Breakdown / Outro)")
+        print(f"🌊 Stability / Anti-Flap:    {stability_score:5.1f}%  ({state_flips} state flips, {phrase_flips} phrase flips)")
+        print("-" * 80)
+        print(f"🏆 OVERALL BENCHMARK SCORE:  {overall_score:5.1f}%")
+        print("=" * 80)
+
+        if hotspots:
+            print("\n⚠️  Top Error Hotspots (first 5 seconds of divergence):")
+            for sec, desc in hotspots[:5]:
+                m = sec // 60
+                s = sec % 60
+                print(f"   • [{m:02d}:{s:02d}] {desc}")
+        print("")
+
+    if failures:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

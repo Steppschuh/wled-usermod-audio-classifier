@@ -11,11 +11,13 @@
       {
         "start_sec": 0.0,
         "end_sec": 45.0,
+        "state": "music",
         "phrase": "verse"
       },
       {
         "start_sec": 45.0,
         "end_sec": 60.0,
+        "state": "music",
         "phrase": "buildup"
       }
     ],

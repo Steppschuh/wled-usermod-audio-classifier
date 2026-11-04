@@ -7,7 +7,15 @@
     "primary_label": "ambient_noise",
     "description": "30s low-level ambient noise sample (~5.3% avg level)",
     "audio_file": "session_20261104_081914.wav",
-    "segments": [],
+    "segments": [
+      {
+        "start_sec": 0.0,
+        "end_sec": 30.0,
+        "state": "silence",
+        "phrase": "steady",
+        "description": "Continuous ambient room noise (~5.3% level, quiet presence)"
+      }
+    ],
     "assertions": [
       {
         "description": "Ambient noise remains below threshold, maintaining quiet state",

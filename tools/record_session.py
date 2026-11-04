@@ -184,6 +184,7 @@ def main():
             cmd = [
                 ffmpeg_bin,
                 "-y",
+                "-thread_queue_size", "2048",
                 "-f", "avfoundation",
                 "-i", ":0",
                 "-ar", "16000",
