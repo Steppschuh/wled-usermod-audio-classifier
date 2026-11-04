@@ -35,7 +35,8 @@ When MQTT is connected, the following entities appear automatically under your W
 
 | Entity Name | Domain | Type | Values / Unit | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| **`Sound Level`** | `sensor` | Measurement | `0.0` – `100.0 %` | Relative sound volume percentage (updated at 1 Hz). |
+| **`Sound Level`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second RMS average sound volume (updated at 1 Hz). |
+| **`Sound Peak`** | `sensor` | Measurement | `0.0` – `100.0 %` | 1-second maximum sound peak (updated at 1 Hz). |
 | **`Sound Detected`** | `binary_sensor` | `sound` | `ON` / `OFF` | Debounced presence indicator for active sound in the room. |
 | **`Audio State`** | `sensor` | `enum` | `silence`, `ambient_noise`, `music` | Contextual room acoustic state. |
 | **`Audio Source Status`** | `sensor` | Diagnostic | Text | Live coupling health with AudioReactive and microphone stream. |
@@ -164,7 +165,8 @@ Topics derive from WLED's configured MQTT Device Topic (`wled/<mac>`):
 
 | Subtopic | Format | Update Rate | Description |
 | :--- | :--- | :--- | :--- |
-| `<device>/audio/level` | Float (`24.5`) | 1 Hz + Heartbeat | Relative sound percentage |
+| `<device>/audio/level` | Float (`24.5`) | 1 Hz + Heartbeat | 1-second RMS average sound percentage |
+| `<device>/audio/peak` | Float (`45.2`) | 1 Hz + Heartbeat | 1-second maximum sound peak percentage |
 | `<device>/audio/sound` | `ON` / `OFF` | On change + Heartbeat | Debounced sound presence |
 | `<device>/audio/state` | String (`silence`, `ambient_noise`, `music`) | On change + Heartbeat | Semantic acoustic state |
 | `<device>/audio/status` | String (diagnostic message) | On change + Heartbeat | AudioReactive coupling state |

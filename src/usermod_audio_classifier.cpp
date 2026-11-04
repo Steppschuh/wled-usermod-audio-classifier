@@ -112,7 +112,7 @@ void AudioClassifierUsermod::addToJsonInfo(JsonObject& root) {
   }
 
   // Row 1: Relative Level & State
-  String levelStr = String(classifier.getCurrentLevelPercent(), 1) + "% (" + classifier.getSemanticStateStr() + ")";
+  String levelStr = String(classifier.getAverageLevelPercent(), 1) + "% avg / " + String(classifier.getPeakLevelPercent(), 1) + "% peak (" + classifier.getSemanticStateStr() + ")";
   infoArr.add(levelStr);
 
   // Row 2: Phrase State (if experimental enabled)

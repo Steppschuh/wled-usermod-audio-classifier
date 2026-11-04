@@ -47,6 +47,8 @@ public:
   // Primary Telemetry
   float getCurrentLevelPercent() const { return currentLevel; }
   float getAverage1sLevelPercent() const { return average1sLevel; }
+  float getAverageLevelPercent() const { return average1sLevel; }
+  float getPeakLevelPercent() const { return peak1sLevel; }
   float getNoiseFloorPercent() const { return noiseFloor; }
   SoundPresence getPresence() const { return presence; }
   bool isSoundDetected() const { return presence == SoundPresence::SOUND; }
@@ -69,12 +71,15 @@ private:
   // Runtime Level Tracking
   float currentLevel = 0.0f;
   float average1sLevel = 0.0f;
+  float peak1sLevel = 0.0f;
+  float current1sPeak = 0.0f;
   float noiseFloor = 2.0f;
 
   // 1-Second Energy Accumulator
   float sumSquaredEnergy = 0.0f;
   size_t frameCount1s = 0;
   uint32_t last1sTickMs = 0;
+  bool has1sTickStart = false;
 
   // Noise Floor Histogram (10th Percentile over up to 300s / 5min)
   static constexpr size_t HISTOGRAM_BINS = 101; // 0% to 100%

@@ -267,6 +267,28 @@ void test_replay_recorded_ambient_noise_session(void) {
   TEST_ASSERT_TRUE(ok);
 }
 
+void test_1s_average_and_peak_tracking(void) {
+  AudioClassifier classifier;
+  AudioFrame frame;
+
+  // Feed frames over 1000ms: 49 frames at 10% and 1 spike at 80%
+  for (uint32_t t = 0; t < 1000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = (t == 500) ? 80.0f : 10.0f;
+    classifier.processFrame(frame);
+  }
+
+  // Trigger the 1000ms tick
+  frame.timestampMs = 1000;
+  frame.levelPercent = 10.0f;
+  classifier.processFrame(frame);
+
+  // Peak should be 80.0%
+  TEST_ASSERT_FLOAT_WITHIN(0.1f, 80.0f, classifier.getPeakLevelPercent());
+  // RMS Average: sqrt((49*10^2 + 80^2)/50) = sqrt((4900 + 6400)/50) = sqrt(226) ≈ 15.03%
+  TEST_ASSERT_FLOAT_WITHIN(1.0f, 15.03f, classifier.getAverageLevelPercent());
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_initial_state_is_quiet_and_silence);
@@ -278,5 +300,6 @@ int main(int argc, char **argv) {
   RUN_TEST(test_music_hangover_persists_across_breakdown);
   RUN_TEST(test_replay_recorded_music_session);
   RUN_TEST(test_replay_recorded_ambient_noise_session);
+  RUN_TEST(test_1s_average_and_peak_tracking);
   return UNITY_END();
 }

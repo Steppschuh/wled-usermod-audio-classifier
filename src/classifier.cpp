@@ -12,11 +12,14 @@ AudioClassifier::AudioClassifier(const ClassifierConfig& initialConfig)
 void AudioClassifier::reset() {
   currentLevel = 0.0f;
   average1sLevel = 0.0f;
+  peak1sLevel = 0.0f;
+  current1sPeak = 0.0f;
   noiseFloor = 2.0f;
 
   sumSquaredEnergy = 0.0f;
   frameCount1s = 0;
   last1sTickMs = 0;
+  has1sTickStart = false;
 
   for (size_t i = 0; i < HISTOGRAM_BINS; i++) histogram[i] = 0;
   for (size_t i = 0; i < HISTORY_MAX_SECS; i++) historyRing[i] = 0;
@@ -72,15 +75,19 @@ const char* AudioClassifier::getPhraseStateStr() const {
 void AudioClassifier::processFrame(const AudioFrame& frame) {
   uint32_t now = frame.timestampMs;
 
-  // 1. Smooth instantaneous level
+  // 1. Smooth instantaneous level and track 1s peak
   currentLevel = (currentLevel * 0.7f) + (frame.levelPercent * 0.3f);
+  if (frame.levelPercent > current1sPeak) {
+    current1sPeak = frame.levelPercent;
+  }
 
   // 2. Accumulate energy for 1-second metric
   sumSquaredEnergy += (frame.levelPercent * frame.levelPercent);
   frameCount1s++;
 
-  if (last1sTickMs == 0) {
+  if (!has1sTickStart) {
     last1sTickMs = now;
+    has1sTickStart = true;
   }
 
   // 3. Periodic 1-second calculations & noise floor update
@@ -110,10 +117,13 @@ void AudioClassifier::processFrame(const AudioFrame& frame) {
 void AudioClassifier::update1sMetrics(uint32_t now) {
   if (frameCount1s > 0) {
     average1sLevel = sqrtf(sumSquaredEnergy / (float)frameCount1s);
+    peak1sLevel = current1sPeak;
   } else {
     average1sLevel = currentLevel;
+    peak1sLevel = currentLevel;
   }
   sumSquaredEnergy = 0.0f;
+  current1sPeak = 0.0f;
   frameCount1s = 0;
 
   // Only adapt baseline background noise floor while the room is in QUIET state

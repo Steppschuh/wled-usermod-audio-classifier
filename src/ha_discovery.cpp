@@ -67,6 +67,33 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
   }
 
+  // 1b. Sound Peak Level Sensor (%)
+  {
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+    JsonDocument doc;
+#else
+    StaticJsonDocument<640> doc;
+#endif
+    doc["name"] = "Sound Peak";
+    doc["stat_t"] = baseTopic + "peak";
+    doc["unit_of_meas"] = "%";
+    doc["stat_cla"] = "measurement";
+    doc["icon"] = "mdi:volume-vibrate";
+    doc["uniq_id"] = chipId + "_audio_peak";
+    doc["avty_t"] = statusTopic;
+    doc["pl_avail"] = "online";
+    doc["pl_not_avail"] = "offline";
+    doc["expire_after"] = 90;
+
+    JsonObject dev = doc.createNestedObject("dev");
+    buildDevice(dev);
+
+    String topic = "homeassistant/sensor/" + chipId + "_audio_peak/config";
+    String payload;
+    serializeJson(doc, payload);
+    mqtt->publish(topic.c_str(), 0, true, payload.c_str());
+  }
+
   // 2. Sound Detected Binary Sensor
   {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
@@ -184,6 +211,7 @@ void HomeAssistantAudioDiscovery::removeDiscovery(bool experimentalEnabled) {
   String chipId = String(escapedMac);
 
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_level/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_peak/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/binary_sensor/" + chipId + "_audio_sound/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_state/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_status/config").c_str(), 0, true, "");
@@ -229,8 +257,13 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
   // Publish periodic / on-change telemetry
   if (force || timeForLevel || timeForHeartbeat) {
     char lvlBuf[16];
-    snprintf(lvlBuf, sizeof(lvlBuf), "%.1f", classifier.getCurrentLevelPercent());
+    snprintf(lvlBuf, sizeof(lvlBuf), "%.1f", classifier.getAverageLevelPercent());
     mqtt->publish((base + "level").c_str(), 0, false, lvlBuf);
+
+    char pkBuf[16];
+    snprintf(pkBuf, sizeof(pkBuf), "%.1f", classifier.getPeakLevelPercent());
+    mqtt->publish((base + "peak").c_str(), 0, false, pkBuf);
+
     lastPubTime = now;
   }
 
