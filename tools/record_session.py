@@ -60,6 +60,7 @@ def main():
     parser.add_argument("--user", default=None, help="MQTT username (if configured)")
     parser.add_argument("--password", default=None, help="MQTT password (if configured)")
     parser.add_argument("--device-topic", default="wled/audio", help="WLED base MQTT topic prefix (default: wled/audio or wled/%%mac%%)")
+    parser.add_argument("--wled-ip", default="192.168.0.26", help="WLED IP address (to ensure live data override during recording)")
     parser.add_argument("--output-dir", default="test/fixtures", help="Directory to save session fixtures")
     parser.add_argument("--duration", type=float, default=None, help="Stop recording automatically after N seconds")
     parser.add_argument("--label", choices=["silence", "ambient_noise", "music"], default=None, help="Pre-set classification label (skips prompt)")
@@ -137,6 +138,19 @@ def main():
     except Exception as e:
         print(f"❌ Could not connect to MQTT broker at {args.broker}:{args.port} - {e}")
         sys.exit(1)
+
+    # Ensure WLED live override is active so external UDP streamers (like LedFx) don't suspend local sound processing
+    if args.wled_ip:
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                f"http://{args.wled_ip}/json/state",
+                data=b'{"lor":2}',
+                headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(req, timeout=1.5)
+        except Exception as e:
+            pass
 
     # Send stream ON command
     time.sleep(0.5)
@@ -218,11 +232,22 @@ def main():
     total_duration = time.time() - start_time
     print(f"\n\n🛑 Recording stopped after {format_duration(total_duration)} ({len(captured_frames)} frames captured).")
 
-    # Stop WLED stream
+    # Stop WLED stream and restore live override
     if stream_topic:
         client.publish(stream_topic, "OFF")
     client.publish("wled/audio/stream", "OFF")
     client.publish("wled/all/audio/stream", "OFF")
+    if args.wled_ip:
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                f"http://{args.wled_ip}/json/state",
+                data=b'{"lor":0}',
+                headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(req, timeout=1.5)
+        except Exception:
+            pass
     client.loop_stop()
     client.disconnect()
 
