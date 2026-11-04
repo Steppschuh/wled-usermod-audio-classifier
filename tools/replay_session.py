@@ -235,14 +235,13 @@ class SimulatedAudioClassifier:
                 self.beat_delay_buffer.clear()
                 self.raw_bpm = 0.0
                 self.bpm_lock_count = 0
-                self.bpm = 0
             self.last_beat_timestamp = t
         else:
             if dt > 3000:
                 self.beat_delay_buffer.clear()
                 self.raw_bpm = 0.0
                 self.bpm_lock_count = 0
-            if dt > 10000 or self.presence == "quiet":
+            if self.semantic_state != "music":
                 self.bpm = 0
                 self.raw_bpm = 0.0
                 self.bpm_lock_count = 0
@@ -413,12 +412,13 @@ class SimulatedAudioClassifier:
                 if self.beat_probability < 0.02:
                     self.beat_probability = 0.0
 
-        # 11. BPM Gating: BPM is only calculated and reported during active beat sections (verse or chorus with non-zero beat probability)
-        if self.presence == "quiet" or self.semantic_state != "music" or self.phrase_state not in ("verse", "chorus") or self.beat_probability <= 0.01:
+        # 11. BPM Gating: BPM is held during music state and cleared when leaving music
+        if self.semantic_state != "music":
             self.bpm = 0
             self.raw_bpm = 0.0
             self.bpm_lock_count = 0
             self.beat_delay_buffer.clear()
+            self.duration_between_beats = 0
 
 
 def format_duration(seconds: float) -> str:

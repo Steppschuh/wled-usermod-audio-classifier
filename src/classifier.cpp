@@ -334,7 +334,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   float beatFeature = (bf2 * 0.3f) + (bassFlux * 0.7f);
 
   // Snare/hi-hat suppression: if volume is low or bass is absent, reject non-beat transients
-  float effRawVol = (frame.rawVolume > 0.0f) ? frame.rawVolume : (frame.levelPercent * 2.55f);
+  float effRawVol = fmaxf(frame.rawVolume, fmaxf(frame.smoothedVolume, frame.levelPercent * 2.55f));
   bool hasBass = (frame.bands[0] >= 40 || frame.bands[1] >= 40) && (bassRatio >= 0.30f);
 
   if (!hasBass || effRawVol < 50.0f) {
@@ -500,7 +500,6 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       beatDelayBuffer.reset();
       rawBpm = 0.0f;
       bpmLockCount = 0;
-      beatsPerMinute = 0;
     }
 
     // Inter-beat regularity from circular history
@@ -547,7 +546,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       rawBpm = 0.0f;
       bpmLockCount = 0;
     }
-    if (durationSinceLastBeat > 10000 || presence == SoundPresence::QUIET) {
+    if (semanticState != AudioSemanticState::MUSIC) {
       beatsPerMinute = 0;
       rawBpm = 0.0f;
       bpmLockCount = 0;
@@ -928,13 +927,14 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     }
   }
 
-  // 11. BPM Gating: BPM is only calculated and reported during active beat sections (verse or chorus with active beat probability)
-  if (presence == SoundPresence::QUIET || semanticState != AudioSemanticState::MUSIC ||
-      (phraseState != MusicPhrase::VERSE && phraseState != MusicPhrase::CHORUS) ||
-      beatProbability <= 0.01f) {
+  // 11. BPM Gating: BPM is held during music state and cleared when leaving music
+  if (semanticState != AudioSemanticState::MUSIC) {
     beatsPerMinute = 0;
     rawBpm = 0.0f;
     bpmLockCount = 0;
     beatDelayBuffer.reset();
+    durationBetweenBeats = 0;
+    durationBetweenBars = 0;
+    durationBetweenPhrases = 0;
   }
 }

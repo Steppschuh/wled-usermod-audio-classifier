@@ -308,21 +308,25 @@ void test_music_hangover_persists_across_breakdown(void) {
   for (uint32_t t = 0; t <= 10000; t += 20) {
     frame.timestampMs = t;
     frame.levelPercent = 40.0f;
-    frame.bands[0] = 130;
-    frame.bands[1] = 110;
-    frame.bands[8] = 40;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 20;
     if (t - lastBeat >= 500) {
       frame.isPeak = true;
+      frame.bands[0] = 140;
+      frame.bands[1] = 120;
+      frame.bands[2] = 80;
       lastBeat = t;
     } else {
       frame.isPeak = false;
     }
+    frame.bands[8] = 40;
     classifier.processFrame(frame);
   }
   TEST_ASSERT_EQUAL_STRING("music", classifier.getSemanticStateStr());
+  TEST_ASSERT_UINT16_WITHIN(5, 120, classifier.getBPM());
 
   // 2. 25-second breakdown into outro: bass drops completely out, no beat peaks, quiet ambient synth/vocal
-  // Even with low volume and zero beat peaks, semanticState MUST NOT flap to ambient_noise!
+  // Even with low volume and zero beat peaks, semanticState MUST NOT flap to ambient_noise,
+  // and BPM must be held at the last known track tempo (~120 BPM) rather than dropping to 0!
   bool sawBreakdownPhrase = false;
   bool sawOutroPhrase = false;
   for (uint32_t t = 10020; t <= 35000; t += 20) {
@@ -353,6 +357,8 @@ void test_music_hangover_persists_across_breakdown(void) {
   TEST_ASSERT_TRUE(sawOutroPhrase);
   TEST_ASSERT_EQUAL_UINT8(30, classifier.getSoundEnergy());
   TEST_ASSERT_EQUAL_STRING("outro", classifier.getPhraseStateStr());
+  // BPM must remain held throughout breakdown and outro
+  TEST_ASSERT_UINT16_WITHIN(5, 120, classifier.getBPM());
 
   // 3. After full 30s hold expires (> 10000 + 30000 = 40000ms), and continued ambient non-music:
   // Ambient noise has flat spectrum across 16 bands (bassRatio = 4/16 = 0.25)
@@ -367,6 +373,8 @@ void test_music_hangover_persists_across_breakdown(void) {
 
   // Now, since 35 seconds of non-musical sound passed (> 30s hold), it cleanly decays to ambient_noise
   TEST_ASSERT_EQUAL_STRING("ambient_noise", classifier.getSemanticStateStr());
+  // When leaving music state, BPM must reset to 0
+  TEST_ASSERT_EQUAL_UINT16(0, classifier.getBPM());
 }
 
 #include "fixture_loader.h"
