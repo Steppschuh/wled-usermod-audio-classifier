@@ -17,5 +17,9 @@ build_output/
 .DS_Store
 Thumbs.db
 
+# Python
+__pycache__/
+*.py[cod]
+
 # Audio recordings (binary audio captures)
 test/fixtures/*.wav

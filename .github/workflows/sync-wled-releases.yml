@@ -1,0 +1,98 @@
+name: Sync Upstream WLED Releases
+
+on:
+  schedule:
+    # Run twice daily at 06:00 and 18:00 UTC
+    - cron: '0 6,18 * * *'
+  workflow_dispatch:
+    inputs:
+      force_wled_tag:
+        description: 'Force a specific WLED tag (e.g. v16.0.1) ignoring release cache'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  check-upstream:
+    name: Check Latest WLED Release
+    runs-on: ubuntu-latest
+    outputs:
+      wled_tag: ${{ steps.resolve.outputs.wled_tag }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      usermod_version: ${{ steps.resolve.outputs.usermod_version }}
+      already_released: ${{ steps.resolve.outputs.already_released }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v7
+
+      - name: Resolve WLED and Usermod Versions
+        id: resolve
+        run: |
+          # 1. Determine upstream WLED tag
+          if [ -n "${{ inputs.force_wled_tag }}" ]; then
+            WLED_TAG="${{ inputs.force_wled_tag }}"
+            echo "Using manually forced WLED tag: ${WLED_TAG}"
+          else
+            WLED_TAG=$(gh api repos/wled/WLED/releases/latest --jq .tag_name)
+            echo "Latest upstream WLED stable release tag: ${WLED_TAG}"
+          fi
+          echo "wled_tag=${WLED_TAG}" >> $GITHUB_OUTPUT
+
+          # 2. Extract usermod version from library.json
+          USERMOD_VERSION=$(jq -r '.version // "0.1.0"' library.json)
+          echo "usermod_version=${USERMOD_VERSION}" >> $GITHUB_OUTPUT
+
+          # 3. Construct target release tag (e.g. v0.1.0-wled-v16.0.1)
+          RELEASE_TAG="v${USERMOD_VERSION}-wled-${WLED_TAG}"
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+
+          # 4. Check if release already exists on this repository
+          if gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists. Skipping build."
+            echo "already_released=true" >> $GITHUB_OUTPUT
+          else
+            echo "Release ${RELEASE_TAG} does not exist. Triggering build & release."
+            echo "already_released=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-and-release:
+    name: Build & Release Firmware
+    needs: check-upstream
+    if: needs.check-upstream.outputs.already_released == 'false'
+    uses: ./.github/workflows/build-firmware.yml
+    with:
+      wled_ref: ${{ needs.check-upstream.outputs.wled_tag }}
+      release_tag: ${{ needs.check-upstream.outputs.release_tag }}
+      release_title: "wled-usermod-audio-classifier ${{ needs.check-upstream.outputs.usermod_version }} (${{ needs.check-upstream.outputs.wled_tag }})"
+      release_body: |
+        Automated firmware build bundling **wled-usermod-audio-classifier v${{ needs.check-upstream.outputs.usermod_version }}** with official **WLED [${{ needs.check-upstream.outputs.wled_tag }}](https://github.com/wled/WLED/releases/tag/${{ needs.check-upstream.outputs.wled_tag }})**.
+
+        ### Firmware Binaries
+        - **Factory Image (`*_factory.bin`)**: Complete firmware bundle (bootloader + partitions + boot_app0 + application) for direct USB flashing at offset `0x0000`.
+        - **OTA Update Image (`*_ota.bin`)**: Application binary for over-the-air updates from the WLED Web UI (**Config** > **Security & Updates** > **Manual OTA Update**).
+        - **SHA256SUMS**: Cryptographic checksums for verifying binary downloads.
+    secrets: inherit
+
+  notify-failure:
+    name: Notify on Build Failure
+    needs: [check-upstream, build-and-release]
+    if: failure() && needs.check-upstream.outputs.already_released == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open Issue for Failed Build
+        run: |
+          WLED_TAG="${{ needs.check-upstream.outputs.wled_tag }}"
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "Upstream WLED ${WLED_TAG} compatibility build failed" \
+            --body "Automated build against new upstream WLED release **${WLED_TAG}** failed.
+
+          Please inspect the [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) to check for breaking changes in WLED core, ESP-IDF dependencies, or usermod APIs." \
+            --label "bug" || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
