@@ -61,6 +61,10 @@ def main():
     parser.add_argument("--password", default=None, help="MQTT password (if configured)")
     parser.add_argument("--device-topic", default="wled/audio", help="WLED base MQTT topic prefix (default: wled/audio or wled/%%mac%%)")
     parser.add_argument("--output-dir", default="test/fixtures", help="Directory to save session fixtures")
+    parser.add_argument("--duration", type=float, default=None, help="Stop recording automatically after N seconds")
+    parser.add_argument("--label", choices=["silence", "ambient_noise", "music"], default=None, help="Pre-set classification label (skips prompt)")
+    parser.add_argument("--description", default="", help="Optional description/title (skips prompt)")
+    parser.add_argument("--non-interactive", action="store_true", help="Do not prompt for interactive labeling")
     parser.add_argument("--no-mic", action="store_true", help="Disable simultaneous MacBook microphone recording")
     args = parser.parse_args()
 
@@ -197,8 +201,12 @@ def main():
             sys.stdout.write(status_line)
             sys.stdout.flush()
 
+            # Check if duration limit reached
+            if args.duration and elapsed >= args.duration:
+                break
+
             # Check if user pressed Enter on stdin
-            if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
+            if sys.stdin.isatty() and sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
                 sys.stdin.readline()
                 break
 
@@ -234,63 +242,11 @@ def main():
         print("\n⚠️  Warning: No frames were received. Ensure WLED is powered on, connected to MQTT, and raw streaming is enabled.")
         return
 
-    # =========================================================================
-    # Post-Recording Interactive Labeler
-    # =========================================================================
-    print("\n" + "=" * 65)
-    print("🏷️  POST-RECORDING INTERACTIVE LABELER")
-    print("=" * 65)
-    print(f"Total Duration:  {format_duration(total_duration)} ({total_duration:.1f}s)")
-    print(f"Total Frames:    {len(captured_frames)}")
-
-    avg_lvl = sum(f.get("lvl", 0.0) for f in captured_frames) / len(captured_frames)
-    max_lvl = max(f.get("lvl", 0.0) for f in captured_frames)
-    print(f"Average Volume:  {avg_lvl:.1f}%")
-    print(f"Max Peak Volume: {max_lvl:.1f}%\n")
-
-    print("Select Primary Classification:")
-    print("  [1] silence       - Room is quiet / background noise floor")
-    print("  [2] ambient_noise - Continuous non-musical noise (fan, speaking, TV background)")
-    print("  [3] music         - Music playback (rhythmic or melodic tracks)")
-
-    primary_label = "music"
-    while True:
-        choice = input("\nEnter choice [1/2/3] (default: 3): ").strip()
-        if choice in ("", "3"):
-            primary_label = "music"
-            break
-        elif choice == "1":
-            primary_label = "silence"
-            break
-        elif choice == "2":
-            primary_label = "ambient_noise"
-            break
-        else:
-            print("Invalid selection. Enter 1, 2, or 3.")
-
-    track_name = input("\nTrack title / sample description (optional): ").strip()
-
-    # Phrase labeling for music
+    primary_label = args.label if args.label else "music"
+    track_name = args.description
     segments = []
-    if primary_label == "music":
-        print("\nAdd Phrase Timeline Segments (Breakdown, Drop, Buildup, Steady)?")
-        print("Example: '0-30:steady, 30-55:buildup, 55-90:drop, 90-120:breakdown'")
-        seg_input = input("Enter segments (or leave blank for whole-track steady): ").strip()
 
-        if seg_input:
-            for item in seg_input.split(","):
-                try:
-                    time_part, phrase_part = item.strip().split(":")
-                    start_str, end_str = time_part.split("-")
-                    segments.append({
-                        "start_sec": float(start_str.strip()),
-                        "end_sec": float(end_str.strip()),
-                        "phrase": phrase_part.strip().lower()
-                    })
-                except Exception:
-                    pass
-
-    # Save fixture JSON bundle
+    # Save initial fixture immediately so data is never lost
     session_data = {
         "metadata": {
             "session_id": session_id,
@@ -312,6 +268,79 @@ def main():
     print(f"   📄 JSON: {json_path}")
     if os.path.exists(wav_path):
         print(f"   🎵 WAV:  {wav_path}")
+
+    # =========================================================================
+    # Post-Recording Interactive Labeler (if interactive)
+    # =========================================================================
+    if not args.non_interactive and not args.label and sys.stdin.isatty():
+        print("\n" + "=" * 65)
+        print("🏷️  POST-RECORDING INTERACTIVE LABELER")
+        print("=" * 65)
+        print(f"Total Duration:  {format_duration(total_duration)} ({total_duration:.1f}s)")
+        print(f"Total Frames:    {len(captured_frames)}")
+
+        avg_lvl = sum(f.get("lvl", 0.0) for f in captured_frames) / len(captured_frames)
+        max_lvl = max(f.get("lvl", 0.0) for f in captured_frames)
+        print(f"Average Volume:  {avg_lvl:.1f}%")
+        print(f"Max Peak Volume: {max_lvl:.1f}%\n")
+
+        print("Select Primary Classification:")
+        print("  [1] silence       - Room is quiet / background noise floor")
+        print("  [2] ambient_noise - Continuous non-musical noise (fan, speaking, TV background)")
+        print("  [3] music         - Music playback (rhythmic or melodic tracks)")
+
+        while True:
+            try:
+                choice = input("\nEnter choice [1/2/3] (default: 3): ").strip()
+                if choice in ("", "3"):
+                    primary_label = "music"
+                    break
+                elif choice == "1":
+                    primary_label = "silence"
+                    break
+                elif choice == "2":
+                    primary_label = "ambient_noise"
+                    break
+                else:
+                    print("Invalid selection. Enter 1, 2, or 3.")
+            except (EOFError, KeyboardInterrupt):
+                break
+
+        if not track_name:
+            try:
+                track_name = input("\nTrack title / sample description (optional): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                pass
+
+        # Phrase labeling for music
+        if primary_label == "music":
+            print("\nAdd Phrase Timeline Segments (Breakdown, Drop, Buildup, Steady)?")
+            print("Example: '0-30:steady, 30-55:buildup, 55-90:drop, 90-120:breakdown'")
+            try:
+                seg_input = input("Enter segments (or leave blank for whole-track steady): ").strip()
+                if seg_input:
+                    for item in seg_input.split(","):
+                        try:
+                            time_part, phrase_part = item.strip().split(":")
+                            start_str, end_str = time_part.split("-")
+                            segments.append({
+                                "start_sec": float(start_str.strip()),
+                                "end_sec": float(end_str.strip()),
+                                "phrase": phrase_part.strip().lower()
+                            })
+                        except Exception:
+                            pass
+            except (EOFError, KeyboardInterrupt):
+                pass
+
+        # Update saved JSON with new labels
+        session_data["metadata"]["primary_label"] = primary_label
+        session_data["metadata"]["description"] = track_name
+        session_data["metadata"]["segments"] = segments
+
+        with open(json_path, "w") as f:
+            json.dump(session_data, f, indent=2)
+        print(f"\n💾 Session Fixture updated with user labels: {json_path}")
 
     print("\n✅ You can now replay this fixture in automated tests with:")
     print(f"   pio test -e native\n")
