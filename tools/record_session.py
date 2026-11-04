@@ -125,6 +125,23 @@ def main():
         except Exception:
             pass
 
+    # Auto-detect device topic from WLED IP if provided
+    device_mac = None
+    if args.wled_ip:
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"http://{args.wled_ip}/json/info", headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                info_data = json.loads(resp.read().decode())
+                device_mac = info_data.get("mac", "")
+                if device_mac and len(device_mac) >= 6:
+                    short_mac = device_mac[-6:].lower()
+                    if args.device_topic == "wled/audio":
+                        args.device_topic = f"wled/{short_mac}"
+                    print(f"💡 Detected WLED MAC: {device_mac} -> Topic: {args.device_topic}")
+        except Exception as e:
+            print(f"⚠️  Could not query WLED info: {e}")
+
     # Initialize MQTT client
     client = mqtt.Client()
     if args.user and args.password:
@@ -139,13 +156,13 @@ def main():
         print(f"❌ Could not connect to MQTT broker at {args.broker}:{args.port} - {e}")
         sys.exit(1)
 
-    # Ensure WLED live override is active so external UDP streamers (like LedFx) don't suspend local sound processing
+    # Ensure WLED live override is active and enable raw stream via HTTP & MQTT
     if args.wled_ip:
         try:
             import urllib.request
             req = urllib.request.Request(
                 f"http://{args.wled_ip}/json/state",
-                data=b'{"lor":2}',
+                data=b'{"lor":2,"AudioClassifier":{"stream-raw":true}}',
                 headers={"Content-Type": "application/json"}
             )
             urllib.request.urlopen(req, timeout=1.5)
@@ -237,12 +254,14 @@ def main():
         client.publish(stream_topic, "OFF")
     client.publish("wled/audio/stream", "OFF")
     client.publish("wled/all/audio/stream", "OFF")
+    client.publish(f"{args.device_topic}/audio/stream", "OFF")
+    client.publish(f"{args.device_topic}/stream", "OFF")
     if args.wled_ip:
         try:
             import urllib.request
             req = urllib.request.Request(
                 f"http://{args.wled_ip}/json/state",
-                data=b'{"lor":0}',
+                data=b'{"lor":0,"AudioClassifier":{"stream-raw":false}}',
                 headers={"Content-Type": "application/json"}
             )
             urllib.request.urlopen(req, timeout=1.5)

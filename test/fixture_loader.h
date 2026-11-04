@@ -154,6 +154,14 @@ public:
                 TEST_FAIL_MESSAGE(msg.c_str());
               }
             }
+            if (!a.expectedPhrase.empty()) {
+              const char* actualPhrase = classifier.getPhraseStateStr();
+              if (a.expectedPhrase != actualPhrase) {
+                std::string msg = "Window assertion failed [" + a.description + "] at " + std::to_string(frameTimeSec) + 
+                                  "s: Expected phrase '" + a.expectedPhrase + "' but got '" + actualPhrase + "'";
+                TEST_FAIL_MESSAGE(msg.c_str());
+              }
+            }
           }
         }
       }

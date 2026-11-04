@@ -185,16 +185,44 @@ class SimulatedAudioClassifier:
         else:
             self.semantic_state = "ambient_noise" if self.current_level >= (self.noise_floor + self.margin) else "silence"
 
-        # Phrase state detection
+        # Phrase state detection with 8-bar chorus lock
         if self.semantic_state == "music":
-            if self.long_bass_energy > 15.0 and self.short_bass_energy < (self.long_bass_energy * 0.45):
-                self.phrase_state = "breakdown"
-            elif self.short_bass_energy > (self.long_bass_energy * 1.50) and self.short_bass_energy > 20.0:
-                self.phrase_state = "drop"
-            elif self.short_bass_energy > (self.long_bass_energy * 1.15):
-                self.phrase_state = "buildup"
+            if not hasattr(self, "last_phrase_change"):
+                self.last_phrase_change = 0
+            time_in_phrase = (t - self.last_phrase_change) / 1000.0
+
+            # 8 bars = 32 beats (approx 12-16s depending on tempo)
+            phrase_dur = 13.0
+            if len(self.beat_times) >= 4:
+                intervals = [self.beat_times[i] - self.beat_times[i-1] for i in range(1, len(self.beat_times))]
+                avg_ms = sum(intervals) / len(intervals)
+                if 250 <= avg_ms <= 1200:
+                    phrase_dur = (avg_ms * 32) / 1000.0
+
+            if self.phrase_state == "chorus" and time_in_phrase < phrase_dur:
+                # Hold chorus for minimum 8 bars unless complete volume drop
+                if self.current_level < (self.noise_floor + 2.0) or (self.long_bass_energy > 15.0 and self.short_bass_energy < (self.long_bass_energy * 0.35)):
+                    self.phrase_state = "breakdown"
+                    self.last_phrase_change = t
+            elif self.current_level < (self.noise_floor + 3.0):
+                if self.phrase_state in ("breakdown", "outro"):
+                    self.phrase_state = "outro"
+                else:
+                    self.phrase_state = "breakdown"
+                    self.last_phrase_change = t
             else:
-                self.phrase_state = "steady"
+                prev_ph = self.phrase_state
+                if self.long_bass_energy > 15.0 and self.short_bass_energy < (self.long_bass_energy * 0.45):
+                    self.phrase_state = "breakdown"
+                elif (self.short_bass_energy > (self.long_bass_energy * 1.35) and self.short_bass_energy > 20.0) or (self.current_level > 35.0 and self.beat_regularity > 0.40):
+                    self.phrase_state = "chorus"
+                elif self.short_bass_energy > (self.long_bass_energy * 1.15):
+                    self.phrase_state = "buildup"
+                else:
+                    self.phrase_state = "verse"
+
+                if self.phrase_state != prev_ph:
+                    self.last_phrase_change = t
         else:
             self.phrase_state = "steady"
 
@@ -321,6 +349,12 @@ def main():
                             a["_failed"] = True
                             failed_asserts += 1
                             failures.append(f"[Window: {a.get('description', '')}] at {t_sec:.2f}s: state '{classifier.semantic_state}' != '{exp_s}'")
+                    exp_ph = a.get("expected_phrase")
+                    if exp_ph and exp_ph.lower() != classifier.phrase_state.lower():
+                        if not a.get("_failed", False):
+                            a["_failed"] = True
+                            failed_asserts += 1
+                            failures.append(f"[Window: {a.get('description', '')}] at {t_sec:.2f}s: phrase '{classifier.phrase_state}' != '{exp_ph}'")
 
     # Finalize window assertions
     for a in assertions:

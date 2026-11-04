@@ -176,8 +176,8 @@ void test_experimental_beat_and_phrasing(void) {
   TEST_ASSERT_EQUAL_STRING("chorus", classifier.getSoundEnergyStr());
   TEST_ASSERT_EQUAL_STRING("chorus", classifier.getPhraseStateStr());
 
-  // Continue steady groove past the initial phrase (> 12s)
-  for (uint32_t t = 8020; t <= 16000; t += 20) {
+  // Continue steady groove past the initial 8-bar phrase (> 16s at 120 BPM)
+  for (uint32_t t = 8020; t <= 18000; t += 20) {
     frame.timestampMs = t;
     frame.levelPercent = 35.0f;
     frame.bands[0] = 120;
@@ -197,6 +197,64 @@ void test_experimental_beat_and_phrasing(void) {
   TEST_ASSERT_EQUAL_UINT8(80, classifier.getSoundEnergy());
   TEST_ASSERT_EQUAL_STRING("verse", classifier.getSoundEnergyStr());
   TEST_ASSERT_EQUAL_STRING("verse", classifier.getPhraseStateStr());
+}
+
+void test_130_bpm_eighth_note_rejection_and_stability(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  AudioClassifier classifier(cfg);
+
+  AudioFrame frame;
+  // 130 BPM: Quarter note beat = 461.5 ms. Eighth note = 230.8 ms.
+  uint32_t lastKick = 0;
+  uint32_t lastSnare = 230;
+  uint16_t bpmSnapshots[5] = {0};
+  size_t snapshotIdx = 0;
+
+  for (uint32_t t = 0; t <= 12000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 38.0f;
+
+    // Default spectrum
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 20;
+
+    bool isKick = (t >= lastKick + 460);
+    bool isSnare = (t >= lastSnare + 460);
+
+    if (isKick) {
+      // Kick: heavy bass transient
+      frame.isPeak = true;
+      frame.bands[0] = 140;
+      frame.bands[1] = 120;
+      frame.bands[2] = 90;
+      lastKick = t;
+    } else if (isSnare) {
+      // Snare on eighth note: mid/high transient, low bass
+      frame.isPeak = true;
+      frame.bands[0] = 15;
+      frame.bands[1] = 20;
+      frame.bands[6] = 130;
+      frame.bands[7] = 110;
+      lastSnare = t;
+    } else {
+      frame.isPeak = false;
+    }
+
+    classifier.processFrame(frame);
+
+    // Record BPM once every second during steady state (sec 7 to 11)
+    if (t >= 7000 && t % 1000 == 0 && snapshotIdx < 5) {
+      bpmSnapshots[snapshotIdx++] = classifier.getBPM();
+    }
+  }
+
+  // Must detect ~130 BPM, NOT 220-260 BPM
+  TEST_ASSERT_UINT16_WITHIN(5, 130, classifier.getBPM());
+
+  // Verify second-by-second stability (no jitter)
+  for (size_t i = 1; i < 5; i++) {
+    TEST_ASSERT_EQUAL_UINT16(bpmSnapshots[0], bpmSnapshots[i]);
+  }
 }
 
 void test_music_hangover_persists_across_breakdown(void) {
@@ -300,6 +358,16 @@ void test_replay_recorded_ambient_noise_session(void) {
   TEST_ASSERT_TRUE(ok);
 }
 
+void test_replay_recorded_3min_phrase_changes_session(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.musicHoldMs = 30000;
+  AudioClassifier classifier(cfg);
+
+  bool ok = FixtureReplayer::replayAndVerify("test/fixtures/session_20261104_113800.json", classifier);
+  TEST_ASSERT_TRUE(ok);
+}
+
 void test_1s_average_and_peak_tracking(void) {
   AudioClassifier classifier;
   AudioFrame frame;
@@ -330,9 +398,11 @@ int main(int argc, char **argv) {
   RUN_TEST(test_continuous_music_does_not_swallow_itself);
   RUN_TEST(test_short_pause_does_not_flap_presence);
   RUN_TEST(test_experimental_beat_and_phrasing);
+  RUN_TEST(test_130_bpm_eighth_note_rejection_and_stability);
   RUN_TEST(test_music_hangover_persists_across_breakdown);
   RUN_TEST(test_replay_recorded_music_session);
   RUN_TEST(test_replay_recorded_ambient_noise_session);
+  RUN_TEST(test_replay_recorded_3min_phrase_changes_session);
   RUN_TEST(test_1s_average_and_peak_tracking);
   return UNITY_END();
 }

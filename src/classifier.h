@@ -211,6 +211,8 @@ private:
 
   uint32_t lastBeatTimestamp = 0;
   uint16_t beatsPerMinute = 0;
+  float rawBpm = 0.0f;
+  uint8_t bpmLockCount = 0;
   uint32_t durationBetweenBeats = 0;
   uint32_t durationBetweenBars = 0;
   uint32_t durationBetweenPhrases = 0;
