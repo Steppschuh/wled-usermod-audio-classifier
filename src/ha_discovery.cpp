@@ -28,10 +28,17 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
   String baseTopic = getBaseTopic();
   String statusTopic = getStatusTopic();
 
+#define STR_HELPER_(x) #x
+#define STR_(x) STR_HELPER_(x)
+
   auto buildDevice = [&](JsonObject& dev) {
     dev["name"] = devName;
 #ifdef AUDIO_CLASSIFIER_RELEASE_TAG
-    dev["sw"] = AUDIO_CLASSIFIER_RELEASE_TAG;
+    String relTag = String(STR_(AUDIO_CLASSIFIER_RELEASE_TAG));
+    if (relTag.startsWith("\"") && relTag.endsWith("\"") && relTag.length() >= 2) {
+      relTag = relTag.substring(1, relTag.length() - 1);
+    }
+    dev["sw"] = relTag;
 #else
     String wledVer = String(versionString);
     if (!wledVer.startsWith("v")) wledVer = "v" + wledVer;

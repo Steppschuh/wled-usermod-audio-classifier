@@ -135,9 +135,6 @@ jobs:
           default_usermods = audioreactive
 
           [env:${{ matrix.env }}]
-          build_flags =
-            \${env.build_flags}
-            -D AUDIO_CLASSIFIER_RELEASE_TAG='\"${TAG}\"'
           custom_usermods =
             \${common.default_usermods}
             wled-usermod-audio-classifier = symlink://${{ github.workspace }}/usermod-repo
