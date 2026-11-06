@@ -134,18 +134,117 @@ Expected output confirms the usermod is running:
 
 ---
 
-## 🛠️ Offline Simulation & Session Replay
+## 🎙️ Recording Live Audio Telemetry & Creating Test Fixtures
 
-When debugging real-world recordings:
-1. **Record a session**:
-   ```bash
-   python3 tools/record_session.py --broker <mqtt-ip> --topic "wled/<mac>/audio/raw" --output test/fixtures/my_session.csv --duration 120
-   ```
-2. **Replay and inspect with Python simulator**:
-   ```bash
-   python3 tools/replay_session.py test/fixtures/my_session.csv --plot
-   ```
-3. When adjustments are made to `src/classifier.cpp`, replicate identical algorithmic updates in `tools/replay_session.py` to maintain offline simulation parity.
+When tuning thresholds or debugging real-world acoustic scenarios (e.g. adjacent room music, conversation, transient noise, or quiet song breakdowns), you can capture live high-frequency telemetry from a physical WLED controller and automatically turn it into a native regression test case.
+
+### Step 1: Record a Synchronized Session
+Ensure WLED is powered on, connected to your MQTT broker, and AudioReactive is active.
+
+Run `tools/record_session.py`:
+```bash
+# Interactive mode (prompts for duration, label, and segment breakdown):
+python3 tools/record_session.py --broker 192.168.0.11 --wled-ip 192.168.0.26
+
+# Non-interactive mode (captures exactly 60 seconds of music):
+python3 tools/record_session.py \
+  --broker 192.168.0.11 \
+  --wled-ip 192.168.0.26 \
+  --duration 60 \
+  --label music \
+  --description "128 BPM Progressive House Track" \
+  --non-interactive
+```
+
+#### What happens during recording:
+1. Automatically detects the controller's MAC address and topic prefix from `http://<wled-ip>/json/info`.
+2. Enables raw high-frequency streaming via HTTP and MQTT (`stream-raw: true` / `lor: 2`).
+3. Captures raw `AudioFrame` payloads (`lvl`, `raw`, `smth`, `bands[16]`, `hz`, `pk`) at ~40–50 FPS over MQTT.
+4. Synchronously captures room ambient audio using ffmpeg / AVFoundation (saves a companion `.wav` file for human listening).
+5. Saves a synchronized JSON fixture to `test/fixtures/session_YYYYMMDD_HHMMSS.json`.
+
+---
+
+### Step 2: Add Behavioral Assertions to the JSON Fixture
+Open the generated `test/fixtures/session_YYYYMMDD_HHMMSS.json`. In the `metadata.assertions` array, define expected states across time:
+
+```json
+{
+  "metadata": {
+    "session_id": "20261106_160000",
+    "primary_label": "music",
+    "description": "Progressive House breakdown into drop",
+    "assertions": [
+      {
+        "description": "Initial quiet breakdown before drop",
+        "min_time_sec": 0.0,
+        "max_time_sec": 15.0,
+        "expected_state": "music",
+        "expected_phrase": "breakdown"
+      },
+      {
+        "description": "Drop impact switches to Chorus and locks 128 BPM",
+        "time_sec": 22.0,
+        "expected_state": "music",
+        "expected_phrase": "chorus",
+        "min_bpm": 125,
+        "max_bpm": 131,
+        "min_beat_prob": 70.0
+      }
+    ]
+  },
+  "frames": [ ... ]
+}
+```
+
+#### Supported Assertion Fields:
+- `time_sec`: Point-in-time assertion (fires once at the closest frame).
+- `min_time_sec` & `max_time_sec`: Window assertion (verified across every frame in the range).
+- `expected_presence`: `"sound"` or `"quiet"`.
+- `expected_state`: `"silence"`, `"ambient_noise"`, or `"music"`.
+- `expected_phrase`: `"intro"`, `"verse"`, `"buildup"`, `"chorus"`, `"breakdown"`, or `"outro"`.
+- `min_bpm` / `max_bpm`: Acceptable tempo range.
+- `min_beat_prob` / `max_beat_prob`: Acceptable beat probability percentage (`0.0` – `100.0%`).
+
+---
+
+### Step 3: Inspect & Validate with the Python Replayer
+Before compiling native C++ tests, run the offline Python replayer to inspect the telemetry and check assertion results:
+
+```bash
+# Terminal summary and assertion validation:
+python3 tools/replay_session.py test/fixtures/session_YYYYMMDD_HHMMSS.json
+
+# Visual interactive matplotlib chart (levels, spectrum, BPM, phrase states):
+python3 tools/replay_session.py test/fixtures/session_YYYYMMDD_HHMMSS.json --plot
+```
+
+---
+
+### Step 4: Create the Native C++ Unit Test Case
+Add a test function in `test/test_classifier.cpp` using `FixtureReplayer`:
+
+```cpp
+void test_replay_recorded_progressive_house_session(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.musicHoldMs = 30000;
+  AudioClassifier classifier(cfg);
+
+  bool ok = FixtureReplayer::replayAndVerify("test/fixtures/session_YYYYMMDD_HHMMSS.json", classifier);
+  TEST_ASSERT_TRUE(ok);
+}
+```
+
+Register the test in `int main(int argc, char **argv)` in `test/test_classifier.cpp`:
+```cpp
+RUN_TEST(test_replay_recorded_progressive_house_session);
+```
+
+Run native tests to verify:
+```bash
+pio test -e native
+```
 
 ---
 
@@ -155,3 +254,4 @@ When debugging real-world recordings:
 - **Decoupled Architecture**: Do not introduce hardware or WLED dependencies into `src/classifier.h` or `src/classifier.cpp`.
 - **Sandbox Permissions**: PlatformIO compilation, network calls (`curl` to hardware IPs), and `git push` require appropriate user permission / sandbox bypass.
 - **Zero Regressions**: Any modification to phrasing or energy thresholds must maintain passing status for the entire 25-test suite.
+

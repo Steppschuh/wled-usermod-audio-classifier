@@ -50,6 +50,26 @@ Then build:
 pio run -e esp32dev
 ```
 
+### 3. Recording Live Audio & Creating Test Fixtures
+
+You can capture live acoustic telemetry from a running WLED controller over MQTT and turn it into a native test case:
+
+1. **Record a session**:
+   ```bash
+   python3 tools/record_session.py --broker <mqtt-ip> --wled-ip <wled-ip> --duration 60 --label music
+   ```
+   This generates a synchronized JSON fixture in `test/fixtures/session_YYYYMMDD_HHMMSS.json`.
+2. **Add assertions**:
+   Add test assertions in the `metadata.assertions` block of the JSON fixture (e.g. `expected_state: "music"`, `expected_phrase: "chorus"`, `min_bpm: 120`).
+3. **Inspect with offline simulator**:
+   ```bash
+   python3 tools/replay_session.py test/fixtures/session_YYYYMMDD_HHMMSS.json --plot
+   ```
+4. **Add to native test suite**:
+   In `test/test_classifier.cpp`, use `FixtureReplayer::replayAndVerify("path/to/fixture.json", classifier)` and register it in `main()`.
+
+See [AGENTS.md](AGENTS.md) for detailed assertion schemas and options.
+
 ## Pull Request Guidelines
 
 1. Ensure all native unit tests pass: `pio test -e native`.

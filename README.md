@@ -502,7 +502,16 @@ The core classification logic (`src/classifier.{h,cpp}`) is 100% decoupled from 
 pio test -e native
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for architecture details, test descriptions, and development guides.
+### Recording Real-World Telemetry & Adding Tests
+You can capture live acoustic telemetry from an active controller and turn it into a native test case:
+```bash
+# Record live frames from WLED via MQTT and save a synchronized JSON test fixture:
+python3 tools/record_session.py --broker <mqtt-ip> --wled-ip <wled-ip> --duration 60 --label music
+
+# Replay and inspect with interactive visualization:
+python3 tools/replay_session.py test/fixtures/session_*.json --plot
+```
+Fixtures are replayed and verified directly within the Unity test suite via `FixtureReplayer`. See [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md) for step-by-step instructions.
 
 ---
 
