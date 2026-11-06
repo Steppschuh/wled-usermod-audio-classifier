@@ -50,8 +50,8 @@ Native tests run directly on the development machine using PlatformIO's `native`
 # Using standard PlatformIO CLI
 pio test -e native
 
-# Or using explicit path on macOS
-/Users/steppschuh/.platformio/penv/bin/pio test -e native
+# Or using explicit path to PlatformIO virtualenv if pio is not in your global PATH
+~/.platformio/penv/bin/pio test -e native
 ```
 
 ### Key Test Cases & Coverage
@@ -73,14 +73,14 @@ pio test -e native
 ## ⚡ Firmware Compilation & OTA Deployment
 
 ### Directory Setup
-WLED builds require the core WLED repository (typically located at `/tmp/wled-core` or cloned alongside the usermod):
+WLED builds require the core WLED repository (typically located at `<path-to-wled-core>`, e.g. `/tmp/wled-core` or cloned alongside the usermod):
 
 ```bash
 git clone https://github.com/wled/WLED.git /tmp/wled-core
 ```
 
 ### Usermod Integration via `platformio_override.ini`
-In `/tmp/wled-core/platformio_override.ini`:
+In `<path-to-wled-core>/platformio_override.ini`:
 
 ```ini
 [platformio]
@@ -92,23 +92,23 @@ default_usermods = audioreactive
 [env:esp32dev]
 custom_usermods =
   ${common.default_usermods}
-  wled-usermod-audio-classifier = symlink:///Users/steppschuh/Documents/Projects/Steppschuh/wled-usermod-audio-classifier
+  wled-usermod-audio-classifier = symlink://<path-to-wled-usermod-audio-classifier>
 ```
 
 *(Using `symlink://` ensures local edits in the usermod workspace are instantly reflected in the compilation without copying files).*
 
 ### Compilation Command
 ```bash
-/Users/steppschuh/.platformio/penv/bin/pio run -d /tmp/wled-core -e esp32dev
+pio run -d <path-to-wled-core> -e esp32dev
 ```
 The compiled binary will be placed at:
-`/tmp/wled-core/.pio/build/esp32dev/firmware.bin`
+`<path-to-wled-core>/.pio/build/esp32dev/firmware.bin`
 
 ### Over-The-Air (OTA) Flash Command
 Flash the compiled binary to the controller over the local network via HTTP POST:
 
 ```bash
-curl -F "file=@/tmp/wled-core/.pio/build/esp32dev/firmware.bin" http://<controller-ip>/update
+curl -F "file=@<path-to-wled-core>/.pio/build/esp32dev/firmware.bin" http://<controller-ip>/update
 ```
 
 A successful update returns:
@@ -144,12 +144,12 @@ Ensure WLED is powered on, connected to your MQTT broker, and AudioReactive is a
 Run `tools/record_session.py`:
 ```bash
 # Interactive mode (prompts for duration, label, and segment breakdown):
-python3 tools/record_session.py --broker 192.168.0.11 --wled-ip 192.168.0.26
+python3 tools/record_session.py --broker <mqtt-broker-ip> --wled-ip <controller-ip>
 
 # Non-interactive mode (captures exactly 60 seconds of music):
 python3 tools/record_session.py \
-  --broker 192.168.0.11 \
-  --wled-ip 192.168.0.26 \
+  --broker <mqtt-broker-ip> \
+  --wled-ip <controller-ip> \
   --duration 60 \
   --label music \
   --description "128 BPM Progressive House Track" \
