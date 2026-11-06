@@ -11,7 +11,7 @@
 #include "ar_source.h"
 
 #ifndef USERMOD_AUDIO_CLASSIFIER_VERSION
-#define USERMOD_AUDIO_CLASSIFIER_VERSION "0.1.0"
+#define USERMOD_AUDIO_CLASSIFIER_VERSION "0.2.0"
 #endif
 
 class HomeAssistantAudioDiscovery {

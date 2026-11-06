@@ -114,7 +114,7 @@ Diagnostic sensor reporting coupling health with WLED's AudioReactive engine (e.
 Pre-compiled binaries are available on the [Releases](https://github.com/Steppschuh/wled-usermod-audio-classifier/releases) page.
 
 ### Method 1: OTA update from WLED web UI (existing device)
-1. Download the release binary (e.g. `WLED_16.0.1_MOD_0.1.0_ESP32.bin`) from [Releases](https://github.com/Steppschuh/wled-usermod-audio-classifier/releases).
+1. Download the release binary (e.g. `WLED_16.0.1_MOD_0.2.0_ESP32.bin`) from [Releases](https://github.com/Steppschuh/wled-usermod-audio-classifier/releases).
 2. Open your controller's web interface (`http://<wled-ip>`).
 3. Navigate to **Config > Security & Updates**.
 4. Under **Manual OTA Update**, click **Choose File**, select the `.bin` file, and click **Update!**.
@@ -123,7 +123,7 @@ Pre-compiled binaries are available on the [Releases](https://github.com/Steppsc
 
 ### Method 2: USB web flasher (new or unconfigured device)
 1. Connect the controller to your computer with a USB data cable.
-2. Download the factory binary (`*_factory.bin`, e.g. `WLED_16.0.1_MOD_0.1.0_ESP32_factory.bin`) from [Releases](https://github.com/Steppschuh/wled-usermod-audio-classifier/releases).
+2. Download the factory binary (`*_factory.bin`, e.g. `WLED_16.0.1_MOD_0.2.0_ESP32_factory.bin`) from [Releases](https://github.com/Steppschuh/wled-usermod-audio-classifier/releases).
 3. Open [ESP Web Tools](https://web.esphome.io/) or [Adafruit ESPTool](https://adafruit.github.io/Adafruit_WebSerial_ESPTool/) in Chrome or Edge.
 4. Click **Connect**, select your serial port, and flash the `*_factory.bin` at offset `0x0000`.
 5. Connect to the setup Wi-Fi hotspot (`WLED-AP`, password: `wled1234`) to configure your network credentials.

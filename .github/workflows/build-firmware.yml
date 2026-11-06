@@ -107,9 +107,15 @@ jobs:
 
       - name: Clone Pinned WLED Core
         run: |
+          TARGET_REF="${{ env.WLED_REF }}"
+          if [ -z "${{ inputs.wled_ref }}" ] && [[ "${{ github.ref_name }}" =~ wled-(v?[0-9a-zA-Z.-]+)-mod- ]]; then
+            TARGET_REF="${BASH_REMATCH[1]}"
+            echo "Resolved WLED ref from tag: ${TARGET_REF}"
+          fi
+          echo "Cloning WLED at ref: ${TARGET_REF}"
           git clone https://github.com/wled/WLED.git wled-core
           cd wled-core
-          git checkout ${{ env.WLED_REF }}
+          git checkout "${TARGET_REF}"
 
       - name: Configure Usermod via platformio_override.ini
         run: |
