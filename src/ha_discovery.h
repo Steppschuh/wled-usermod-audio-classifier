@@ -10,6 +10,10 @@
 #include "classifier.h"
 #include "ar_source.h"
 
+#ifndef USERMOD_AUDIO_CLASSIFIER_VERSION
+#define USERMOD_AUDIO_CLASSIFIER_VERSION "0.1.0"
+#endif
+
 class HomeAssistantAudioDiscovery {
 public:
   static void publishDiscovery(bool experimentalEnabled = true);

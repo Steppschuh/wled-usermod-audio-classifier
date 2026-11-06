@@ -76,8 +76,8 @@ jobs:
         Automated firmware build bundling **wled-usermod-audio-classifier ${{ needs.check-upstream.outputs.usermod_tag }}** with official **WLED [${{ needs.check-upstream.outputs.wled_tag }}](https://github.com/wled/WLED/releases/tag/${{ needs.check-upstream.outputs.wled_tag }})**.
 
         ### Firmware Binaries
-        - **Factory Image (`*_factory.bin`)**: Complete firmware bundle (bootloader + partitions + boot_app0 + application) for direct USB flashing at offset `0x0000`.
-        - **OTA Update Image (`*_ota.bin`)**: Application binary for over-the-air updates from the WLED Web UI (**Config** > **Security & Updates** > **Manual OTA Update**).
+        - **OTA Update Binary (`WLED_*_ESP32.bin`)**: Standard firmware binary for over-the-air updates from the WLED Web UI (**Config** > **Security & Updates** > **Manual OTA Update**).
+        - **Factory Flash Image (`WLED_*_ESP32_factory.bin`)**: Complete firmware bundle (bootloader + partitions + boot_app0 + application) for direct USB web flashing at offset `0x0000`.
         - **SHA256SUMS**: Cryptographic checksums for verifying binary downloads.
     secrets: inherit
 

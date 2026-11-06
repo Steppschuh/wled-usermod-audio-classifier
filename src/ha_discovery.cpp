@@ -30,7 +30,15 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 
   auto buildDevice = [&](JsonObject& dev) {
     dev["name"] = devName;
-    dev["sw"] = versionString;
+#ifdef AUDIO_CLASSIFIER_RELEASE_TAG
+    dev["sw"] = AUDIO_CLASSIFIER_RELEASE_TAG;
+#else
+    String wledVer = String(versionString);
+    if (!wledVer.startsWith("v")) wledVer = "v" + wledVer;
+    String modVer = String(USERMOD_AUDIO_CLASSIFIER_VERSION);
+    if (!modVer.startsWith("v")) modVer = "v" + modVer;
+    dev["sw"] = "wled-" + wledVer + "-mod-" + modVer;
+#endif
     dev["mdl"] = "WLED";
     JsonArray ids = dev.createNestedArray("ids");
     ids.add(chipId);

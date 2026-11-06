@@ -113,6 +113,20 @@ jobs:
 
       - name: Configure Usermod via platformio_override.ini
         run: |
+          USERMOD_VERSION=$(jq -r '.version // "0.1.0"' usermod-repo/library.json)
+          USERMOD_TAG="v${USERMOD_VERSION#v}"
+          
+          # Determine release tag (e.g. wled-v16.0.1-mod-v0.1.0)
+          if [ -n "${{ inputs.release_tag }}" ]; then
+            TAG="${{ inputs.release_tag }}"
+          elif [[ "${{ github.ref_name }}" =~ ^(v|wled-) ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            WLED_TAG_PART="${WLED_REF#v}"
+            TAG="wled-v${WLED_TAG_PART}-mod-${USERMOD_TAG}"
+          fi
+          echo "RELEASE_TAG=${TAG}" >> $GITHUB_ENV
+
           cat <<EOF > wled-core/platformio_override.ini
           [platformio]
           default_envs = ${{ matrix.env }}
@@ -121,6 +135,9 @@ jobs:
           default_usermods = audioreactive
 
           [env:${{ matrix.env }}]
+          build_flags =
+            \${env.build_flags}
+            -D AUDIO_CLASSIFIER_RELEASE_TAG='\"${TAG}\"'
           custom_usermods =
             \${common.default_usermods}
             wled-usermod-audio-classifier = symlink://${{ github.workspace }}/usermod-repo
@@ -135,15 +152,40 @@ jobs:
         run: |
           mkdir -p build_output
           BUILD_DIR="wled-core/.pio/build/${{ matrix.env }}"
-          
-          # 1. Copy OTA binary
-          cp "${BUILD_DIR}/firmware.bin" "build_output/wled_audio_classifier_${{ matrix.env }}_ota.bin"
+          USERMOD_VERSION=$(jq -r '.version // "0.1.0"' usermod-repo/library.json)
+          USERMOD_CLEAN="${USERMOD_VERSION#v}"
+
+          # Extract clean WLED version (e.g. 16.0.1 or 17.0.0-devV5)
+          if [[ "${{ env.RELEASE_TAG }}" =~ wled-v?([0-9a-zA-Z.-]+)-mod- ]]; then
+            WLED_CLEAN="${BASH_REMATCH[1]}"
+          elif [[ "${{ env.WLED_REF }}" =~ ^v?[0-9] ]]; then
+            WLED_CLEAN="${WLED_REF#v}"
+          else
+            WLED_CLEAN=$(git -C wled-core describe --tags --always 2>/dev/null | sed 's/^v//' || echo "dev")
+          fi
+          WLED_CLEAN="${WLED_CLEAN#v}"
+
+          # Map PlatformIO environment to official WLED board target naming
+          case "${{ matrix.env }}" in
+            esp32dev) TARGET="ESP32" ;;
+            esp32_c3*) TARGET="ESP32-C3" ;;
+            esp32_s3*) TARGET="ESP32-S3" ;;
+            esp8266*) TARGET="ESP8266" ;;
+            *) TARGET=$(echo "${{ matrix.env }}" | tr '[:lower:]' '[:upper:]') ;;
+          esac
+
+          # Official WLED release naming convention: WLED_<WLED_VER>_MOD_<USERMOD_VER>_<TARGET>.bin
+          BASE_NAME="WLED_${WLED_CLEAN}_MOD_${USERMOD_CLEAN}_${TARGET}"
+          echo "Packaging artifacts with base name: ${BASE_NAME}"
+
+          # 1. Copy main OTA binary
+          cp "${BUILD_DIR}/firmware.bin" "build_output/${BASE_NAME}.bin"
 
           # 2. Assemble factory binary (bootloader + partitions + boot_app0 + app at 0x0)
           if [ -f "${BUILD_DIR}/bootloader.bin" ] && [ -f "${BUILD_DIR}/partitions.bin" ]; then
             BOOT_APP0=$(find ~/.platformio/packages -name "boot_app0.bin" 2>/dev/null | head -n 1)
             if [ -n "$BOOT_APP0" ]; then
-              esptool.py --chip esp32 merge-bin -o "build_output/wled_audio_classifier_${{ matrix.env }}_factory.bin" \
+              esptool.py --chip esp32 merge-bin -o "build_output/${BASE_NAME}_factory.bin" \
                 --flash-mode dio --flash-size 4MB \
                 0x1000 "${BUILD_DIR}/bootloader.bin" \
                 0x8000 "${BUILD_DIR}/partitions.bin" \
