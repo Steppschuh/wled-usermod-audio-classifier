@@ -1034,6 +1034,75 @@ void test_edm_macro_structure_phrase_progression_and_anti_churn(void) {
   TEST_ASSERT_TRUE_MESSAGE(m.stabilityScore >= 85.0f, "EDM Macro phrase stability score must be >= 85%!");
 }
 
+void test_chorus_to_breakdown_does_not_flip_to_outro_one_second_later(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.onDelayMs = 500;
+  cfg.offDelayMs = 8000;
+  cfg.musicHoldMs = 30000;
+  AudioClassifier classifier(cfg);
+
+  AudioFrame frame;
+  // 1. Establish strong Chorus for 8 seconds (128 BPM = ~468ms interval)
+  uint32_t lastBeat = 0;
+  for (uint32_t t = 0; t <= 8000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 50.0f;
+    frame.rawVolume = 120.0f;
+    frame.smoothedVolume = 120.0f;
+    frame.majorPeakHz = 60.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 30;
+
+    if (t - lastBeat >= 468) {
+      frame.isPeak = true;
+      frame.bands[0] = 180;
+      frame.bands[1] = 160;
+      frame.bands[2] = 120;
+      lastBeat = t;
+    } else {
+      frame.isPeak = false;
+    }
+    classifier.processFrame(frame);
+  }
+
+  TEST_ASSERT_EQUAL_STRING("Chorus", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_UINT8(100, classifier.getSoundEnergy());
+
+  // 2. Sudden transition to Breakdown: kicks drop out, volume drops to 4.5% (synth pad / room reverb).
+  // Noise floor is typically ~2.0%, so 4.5% is quiet and previously was < noiseFloor + 3.0f,
+  // which triggered a 1-second flip to Outro.
+  // Verify that for the next 15 seconds, the classifier stays firmly in Breakdown.
+  for (uint32_t t = 8020; t <= 23000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 4.5f;
+    frame.rawVolume = 10.0f;
+    frame.smoothedVolume = 10.0f;
+    frame.isPeak = false;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 5;
+    frame.bands[8] = 12; // subtle synth pad mid
+
+    classifier.processFrame(frame);
+
+    // After ~1.2 seconds (t = 9200), phrase should be Breakdown, NOT Outro!
+    if (t == 9200) {
+      TEST_ASSERT_EQUAL_STRING("Breakdown", classifier.getPhraseStateStr());
+    }
+    // At 5 seconds into breakdown (t = 13000):
+    if (t == 13000) {
+      TEST_ASSERT_EQUAL_STRING("Breakdown", classifier.getPhraseStateStr());
+    }
+    // At 10 seconds into breakdown (t = 18000):
+    if (t == 18000) {
+      TEST_ASSERT_EQUAL_STRING("Breakdown", classifier.getPhraseStateStr());
+    }
+    // Throughout this 15-second breakdown dwell, phrase must never be prematurely flipped to Outro
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(MusicPhrase::OUTRO, classifier.getPhraseState(),
+                                  "Classifier flipped to Outro during breakdown dwell (< 20s)!");
+  }
+
+  TEST_ASSERT_EQUAL_STRING("Breakdown", classifier.getPhraseStateStr());
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_initial_state_is_quiet_and_silence);
@@ -1060,5 +1129,6 @@ int main(int argc, char **argv) {
   RUN_TEST(test_isolated_single_bass_hit_does_not_yield_high_beat_probability);
   RUN_TEST(test_phrase_penalty_calculator_penalizes_rapid_phrase_churn);
   RUN_TEST(test_edm_macro_structure_phrase_progression_and_anti_churn);
+  RUN_TEST(test_chorus_to_breakdown_does_not_flip_to_outro_one_second_later);
   return UNITY_END();
 }

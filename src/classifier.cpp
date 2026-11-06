@@ -826,8 +826,12 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
 
     if (isVolumeCollapsed && noBeatsRecent) {
       if (soundEnergy == SoundEnergy::OUTRO) {
-        updatedEnergy = SoundEnergy::OUTRO;
-      } else if (soundEnergy == SoundEnergy::BREAKDOWN && (barsSinceEnergyUpdate >= 8 || currentLevel < noiseFloor + 3.0f)) {
+        if (currentLevel >= noiseFloor + 6.0f && average1sLevel >= 18.0f) {
+          updatedEnergy = SoundEnergy::BREAKDOWN;
+        } else {
+          updatedEnergy = SoundEnergy::OUTRO;
+        }
+      } else if (soundEnergy == SoundEnergy::BREAKDOWN && timeSincePhraseChange >= 20000 && barsSinceEnergyUpdate >= 10) {
         updatedEnergy = SoundEnergy::OUTRO;
       } else {
         updatedEnergy = SoundEnergy::BREAKDOWN;
@@ -856,13 +860,19 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       }
     } else if ((soundEnergy == SoundEnergy::BREAKDOWN || soundEnergy == SoundEnergy::OUTRO || soundEnergy == SoundEnergy::VERSE) &&
                (peak1sLevel >= 16.0f) &&
-               ((frame.bands[10] >= 35 && frame.bands[11] >= 45) || (bassTrend > 1.25f && barsWithoutBeats >= 1 && peak1sLevel >= 22.0f))) {
+               ((frame.bands[10] >= 30 && frame.bands[11] >= 40) ||
+                (barsWithoutBeats >= 1 && ((currentLevel > average1sLevel * 1.15f && peak1sLevel >= 20.0f) || (frame.majorPeakHz > 300.0f && (frame.bands[10] >= 20 || frame.bands[11] >= 20)))) ||
+                (bassTrend > 1.25f && barsWithoutBeats >= 1 && peak1sLevel >= 22.0f))) {
       updatedEnergy = SoundEnergy::BUILDUP;
     } else {
       if (soundEnergy == SoundEnergy::OUTRO) {
-        updatedEnergy = SoundEnergy::OUTRO;
+        if (currentLevel >= noiseFloor + 6.0f && average1sLevel >= 18.0f && !isVolumeCollapsed) {
+          updatedEnergy = SoundEnergy::BREAKDOWN;
+        } else {
+          updatedEnergy = SoundEnergy::OUTRO;
+        }
       } else if (soundEnergy == SoundEnergy::CHORUS || soundEnergy == SoundEnergy::BREAKDOWN || isVolumeCollapsed || noBeatsRecent || bassTrend < 0.50f || (bassRatio < 0.15f && currentLevel > noiseFloor + 2.0f)) {
-        if (soundEnergy == SoundEnergy::BREAKDOWN && (barsSinceEnergyUpdate >= 8 || currentLevel < noiseFloor + 3.0f)) {
+        if (soundEnergy == SoundEnergy::BREAKDOWN && timeSincePhraseChange >= 20000 && barsSinceEnergyUpdate >= 10) {
           updatedEnergy = SoundEnergy::OUTRO;
         } else {
           updatedEnergy = SoundEnergy::BREAKDOWN;
@@ -894,6 +904,8 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
         } else if (soundEnergy == SoundEnergy::BUILDUP) {
           if (updatedEnergy == SoundEnergy::CHORUS || (dropInLastPhrase && (peak1sLevel >= 38.0f || average1sLevel >= 28.0f)) || peak1sLevel >= 48.0f) {
             soundEnergy = SoundEnergy::CHORUS;
+          } else if (updatedEnergy >= SoundEnergy::VERSE) {
+            soundEnergy = SoundEnergy::VERSE;
           }
         } else {
           soundEnergy = updatedEnergy;
@@ -930,7 +942,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
             lastEnergyUpdateTime = now;
           }
         } else if (soundEnergy == SoundEnergy::BREAKDOWN) {
-          if (barsSinceEnergyUpdate >= 8 || currentLevel < noiseFloor + 3.0f) {
+          if (timeSincePhraseChange >= 20000 && barsSinceEnergyUpdate >= 10) {
             soundEnergy = SoundEnergy::OUTRO;
             lastEnergyUpdateTime = now;
           }

@@ -817,8 +817,11 @@ class SimulatedAudioClassifier:
 
             if is_volume_collapsed and no_beats_recent:
                 if self.sound_energy == SoundEnergy.OUTRO:
-                    updated_energy = SoundEnergy.OUTRO
-                elif self.sound_energy == SoundEnergy.BREAKDOWN and (bars_since_energy_update >= 8 or self.current_level < self.noise_floor + 3.0):
+                    if self.current_level >= self.noise_floor + 6.0 and self.average_1s_level >= 18.0:
+                        updated_energy = SoundEnergy.BREAKDOWN
+                    else:
+                        updated_energy = SoundEnergy.OUTRO
+                elif self.sound_energy == SoundEnergy.BREAKDOWN and time_since_phrase_change >= 20000 and bars_since_energy_update >= 10:
                     updated_energy = SoundEnergy.OUTRO
                 else:
                     updated_energy = SoundEnergy.BREAKDOWN
@@ -840,14 +843,19 @@ class SimulatedAudioClassifier:
                 else:
                     updated_energy = SoundEnergy.VERSE
             elif (self.sound_energy in (SoundEnergy.BREAKDOWN, SoundEnergy.OUTRO, SoundEnergy.VERSE)) and (self.peak_1s_level >= 16.0) and (
-                (bands[10] >= 35 and bands[11] >= 45) or (bass_trend > 1.25 and bars_without_beats >= 1 and self.peak_1s_level >= 22.0)
+                (bands[10] >= 30 and bands[11] >= 40)
+                or (bars_without_beats >= 1 and ((self.current_level > self.average_1s_level * 1.15 and self.peak_1s_level >= 20.0) or (hz > 300.0 and (bands[10] >= 20 or bands[11] >= 20))))
+                or (bass_trend > 1.25 and bars_without_beats >= 1 and self.peak_1s_level >= 22.0)
             ):
                 updated_energy = SoundEnergy.BUILDUP
             else:
                 if self.sound_energy == SoundEnergy.OUTRO:
-                    updated_energy = SoundEnergy.OUTRO
+                    if self.current_level >= self.noise_floor + 6.0 and self.average_1s_level >= 18.0 and not is_volume_collapsed:
+                        updated_energy = SoundEnergy.BREAKDOWN
+                    else:
+                        updated_energy = SoundEnergy.OUTRO
                 elif self.sound_energy in (SoundEnergy.CHORUS, SoundEnergy.BREAKDOWN) or is_volume_collapsed or no_beats_recent or bass_trend < 0.50 or (bass_ratio < 0.15 and self.current_level > self.noise_floor + 2.0):
-                    if self.sound_energy == SoundEnergy.BREAKDOWN and (bars_since_energy_update >= 8 or self.current_level < self.noise_floor + 3.0):
+                    if self.sound_energy == SoundEnergy.BREAKDOWN and time_since_phrase_change >= 20000 and bars_since_energy_update >= 10:
                         updated_energy = SoundEnergy.OUTRO
                     else:
                         updated_energy = SoundEnergy.BREAKDOWN
@@ -887,6 +895,8 @@ class SimulatedAudioClassifier:
                     elif self.sound_energy == SoundEnergy.BUILDUP:
                         if updated_energy == SoundEnergy.CHORUS or (drop_in_last_phrase and (self.peak_1s_level >= 36.0 or self.average_1s_level >= 26.0)) or self.peak_1s_level >= 45.0:
                             self.sound_energy = SoundEnergy.CHORUS
+                        elif updated_energy >= SoundEnergy.VERSE:
+                            self.sound_energy = SoundEnergy.VERSE
                     else:
                         self.sound_energy = updated_energy
                     if self.sound_energy != prev_energy:
@@ -911,15 +921,12 @@ class SimulatedAudioClassifier:
                             self.sound_energy = updated_energy
                             self.last_energy_update_time = now
                     elif self.sound_energy == SoundEnergy.BUILDUP:
-                        if bars_since_energy_update >= 4 or self.current_level < self.noise_floor + 3.0 or is_volume_collapsed:
+                        if bars_since_energy_update >= 16 or self.current_level < self.noise_floor + 3.0 or is_volume_collapsed:
                             self.sound_energy = SoundEnergy.BREAKDOWN
                             self.last_energy_update_time = now
                     elif self.sound_energy == SoundEnergy.BREAKDOWN:
-                        if bars_since_energy_update >= 8 or self.current_level < self.noise_floor + 3.0:
+                        if time_since_phrase_change >= 20000 and bars_since_energy_update >= 10:
                             self.sound_energy = SoundEnergy.OUTRO
-                            self.last_energy_update_time = now
-                        elif bars_since_energy_update >= 4:
-                            self.sound_energy = SoundEnergy.INTRO
                             self.last_energy_update_time = now
                     else:
                         self.sound_energy = updated_energy
