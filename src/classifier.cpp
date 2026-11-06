@@ -34,7 +34,7 @@ void AudioClassifier::reset() {
   pendingOffTime = 0;
 
   semanticState = AudioSemanticState::SILENCE;
-  phraseState = MusicPhrase::VERSE;
+  phraseState = MusicPhrase::UNKNOWN;
   soundEnergy = SoundEnergy::SILENCE;
   musicConfidence = 0.0f;
   lastPhraseChangeMs = 0;
@@ -83,7 +83,7 @@ void AudioClassifier::reset() {
   longBassEnergy = 0.0f;
 
   tentativePrevEnergy = SoundEnergy::SILENCE;
-  tentativePrevPhrase = MusicPhrase::VERSE;
+  tentativePrevPhrase = MusicPhrase::UNKNOWN;
   tentativePrevPhraseStartMs = 0;
   tentativeTransitionMs = 0;
   isTentativeTransition = false;
@@ -104,6 +104,9 @@ const char* AudioClassifier::getSemanticStateStr() const {
 }
 
 const char* AudioClassifier::getPhraseStateStr() const {
+  if (semanticState != AudioSemanticState::MUSIC) {
+    return "Unknown";
+  }
   switch (phraseState) {
     case MusicPhrase::VERSE:     return "Verse";
     case MusicPhrase::INTRO:     return "Intro";
@@ -111,11 +114,15 @@ const char* AudioClassifier::getPhraseStateStr() const {
     case MusicPhrase::CHORUS:    return "Chorus";
     case MusicPhrase::BREAKDOWN: return "Breakdown";
     case MusicPhrase::OUTRO:     return "Outro";
-    default:                     return "Verse";
+    case MusicPhrase::UNKNOWN:
+    default:                     return "Unknown";
   }
 }
 
 const char* AudioClassifier::getSoundEnergyStr() const {
+  if (semanticState != AudioSemanticState::MUSIC) {
+    return "silence";
+  }
   switch (soundEnergy) {
     case SoundEnergy::SILENCE:   return "silence";
     case SoundEnergy::NOISE:     return "noise";
@@ -161,17 +168,26 @@ void AudioClassifier::processFrame(const AudioFrame& frame) {
   updatePresence(now);
 
   // 5. Experimental semantic classification & phrasing
+  // Enforce biconditional rule: Audio Type == Silence <===> Audio Detected == Clear
   if (presence == SoundPresence::QUIET) {
-    bool hangoverActive = (lastMusicEvidenceTime > 0 && (now - lastMusicEvidenceTime <= config.musicHoldMs));
-    if (!hangoverActive) {
-      semanticState = AudioSemanticState::SILENCE;
-      phraseState = MusicPhrase::VERSE;
-      musicConfidence = 0.0f;
-    } else {
-      updateMusicAndPhrasing(frame);
-    }
+    semanticState = AudioSemanticState::SILENCE;
+    phraseState = MusicPhrase::UNKNOWN;
+    soundEnergy = SoundEnergy::SILENCE;
+    musicConfidence = 0.0f;
+    beatProbability = 0.0f;
   } else {
     updateMusicAndPhrasing(frame);
+    if (presence == SoundPresence::QUIET) {
+      semanticState = AudioSemanticState::SILENCE;
+      phraseState = MusicPhrase::UNKNOWN;
+      soundEnergy = SoundEnergy::SILENCE;
+      musicConfidence = 0.0f;
+      beatProbability = 0.0f;
+    } else if (semanticState == AudioSemanticState::SILENCE) {
+      semanticState = AudioSemanticState::AMBIENT_NOISE;
+      phraseState = MusicPhrase::UNKNOWN;
+      soundEnergy = SoundEnergy::SILENCE;
+    }
   }
 }
 
@@ -253,13 +269,20 @@ void AudioClassifier::updatePresence(uint32_t now) {
   } else {
     isPendingOn = false;
     if (presence == SoundPresence::SOUND) {
-      if (!isPendingOff) {
-        isPendingOff = true;
-        pendingOffTime = now;
-      }
-      if (now - pendingOffTime >= config.offDelayMs) {
-        presence = SoundPresence::QUIET;
+      bool hangoverActive = (semanticState == AudioSemanticState::MUSIC &&
+                             lastMusicEvidenceTime > 0 &&
+                             (now - lastMusicEvidenceTime <= config.musicHoldMs));
+      if (hangoverActive) {
         isPendingOff = false;
+      } else {
+        if (!isPendingOff) {
+          isPendingOff = true;
+          pendingOffTime = now;
+        }
+        if (now - pendingOffTime >= config.offDelayMs) {
+          presence = SoundPresence::QUIET;
+          isPendingOff = false;
+        }
       }
     }
   }
@@ -267,9 +290,9 @@ void AudioClassifier::updatePresence(uint32_t now) {
 
 void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   if (!config.experimentalEnabled) {
-    semanticState = AudioSemanticState::AMBIENT_NOISE;
-    phraseState = MusicPhrase::VERSE;
-    soundEnergy = SoundEnergy::NOISE;
+    semanticState = (presence == SoundPresence::SOUND) ? AudioSemanticState::AMBIENT_NOISE : AudioSemanticState::SILENCE;
+    phraseState = MusicPhrase::UNKNOWN;
+    soundEnergy = SoundEnergy::SILENCE;
     musicConfidence = 0.0f;
     beatsPerMinute = 0;
     beatProbability = 0.0f;
@@ -649,7 +672,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   if (beatRegularity > 0.50f && (now - lastBeatTimestamp <= 3000)) {
     hasMusicalEvidence = true;
     instantConfidence = beatRegularity;
-  } else if (((b01 >= b23 * 1.05f && b01 >= 10.0f) || (highEnergy >= 15.0f && b01 >= 20.0f)) && !isMidOverpowering && currentLevel > (noiseFloor + 5.0f)) {
+  } else if (((b01 >= b23 * 1.05f && b01 >= 10.0f) || (highEnergy >= 15.0f && b01 >= 20.0f)) && !isMidOverpowering && (currentLevel > (noiseFloor + 5.0f) || (frame.levelPercent > (noiseFloor + 4.0f) && b01 >= 30.0f))) {
     hasMusicalEvidence = true;
     instantConfidence = 0.75f;
   }
@@ -666,14 +689,19 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   if (semanticState == AudioSemanticState::MUSIC) {
     bool hangoverActive = (lastMusicEvidenceTime > 0 && (now - lastMusicEvidenceTime <= config.musicHoldMs));
     if (!hangoverActive) {
-      if (presence == SoundPresence::SOUND) {
+      float threshold = config.quietThresholdPercent;
+      float dynamicThreshold = noiseFloor + config.marginAboveFloorPercent;
+      if (dynamicThreshold > threshold) threshold = dynamicThreshold;
+
+      if (currentLevel > threshold) {
         semanticState = AudioSemanticState::AMBIENT_NOISE;
-        soundEnergy = SoundEnergy::NOISE;
       } else {
         semanticState = AudioSemanticState::SILENCE;
-        soundEnergy = SoundEnergy::SILENCE;
+        presence = SoundPresence::QUIET;
+        isPendingOff = false;
       }
-      phraseState = MusicPhrase::VERSE;
+      soundEnergy = SoundEnergy::SILENCE;
+      phraseState = MusicPhrase::UNKNOWN;
     }
   } else {
     if (musicConfidence >= 0.60f || (beatRegularity >= 0.70f && currentLevel > noiseFloor + 5.0f)) {
@@ -682,10 +710,12 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       if (musicConfidence < 0.70f) musicConfidence = 0.70f;
     } else if (presence == SoundPresence::SOUND) {
       semanticState = AudioSemanticState::AMBIENT_NOISE;
-      soundEnergy = SoundEnergy::NOISE;
+      soundEnergy = SoundEnergy::SILENCE;
+      phraseState = MusicPhrase::UNKNOWN;
     } else {
       semanticState = AudioSemanticState::SILENCE;
       soundEnergy = SoundEnergy::SILENCE;
+      phraseState = MusicPhrase::UNKNOWN;
     }
   }
 
@@ -919,7 +949,8 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       lastExpectedPhraseStart = now;
     }
   } else {
-    phraseState = MusicPhrase::VERSE;
+    phraseState = MusicPhrase::UNKNOWN;
+    soundEnergy = SoundEnergy::SILENCE;
     isTentativeTransition = false;
   }
 

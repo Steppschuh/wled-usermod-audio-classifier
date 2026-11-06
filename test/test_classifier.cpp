@@ -17,7 +17,10 @@ void test_initial_state_is_quiet_and_silence(void) {
   TEST_ASSERT_EQUAL_UINT8(SoundPresence::QUIET, classifier.getPresence());
   TEST_ASSERT_FALSE(classifier.isSoundDetected());
   TEST_ASSERT_EQUAL_STRING("Silence", classifier.getSemanticStateStr());
-  TEST_ASSERT_EQUAL_STRING("Verse", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_STRING("Unknown", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_UINT8(MusicPhrase::UNKNOWN, classifier.getPhraseState());
+  TEST_ASSERT_EQUAL_UINT8(0, classifier.getSoundEnergy());
+  TEST_ASSERT_EQUAL_STRING("silence", classifier.getSoundEnergyStr());
 }
 
 void test_transient_noise_ignored(void) {
@@ -714,9 +717,76 @@ void test_isolated_single_bass_hit_does_not_yield_high_beat_probability(void) {
   TEST_ASSERT_TRUE_MESSAGE(classifier.getBeatProbability() <= 0.20f, "Single isolated bass hit must not yield high beat probability");
 }
 
+void test_non_music_state_has_zero_energy_and_unknown_phrase_and_silence_clear_coupling(void) {
+  ClassifierConfig cfg;
+  cfg.onDelayMs = 500;
+  cfg.offDelayMs = 2000;
+  cfg.quietThresholdPercent = 5.0f;
+  cfg.marginAboveFloorPercent = 4.0f;
+  cfg.experimentalEnabled = true;
+  AudioClassifier classifier(cfg);
+
+  // 1. Initial State: Silence <==> Clear
+  TEST_ASSERT_EQUAL_UINT8(SoundPresence::QUIET, classifier.getPresence());
+  TEST_ASSERT_FALSE(classifier.isSoundDetected());
+  TEST_ASSERT_EQUAL_STRING("Silence", classifier.getSemanticStateStr());
+  TEST_ASSERT_EQUAL_UINT8(AudioSemanticState::SILENCE, classifier.getSemanticState());
+  TEST_ASSERT_EQUAL_STRING("Unknown", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_UINT8(MusicPhrase::UNKNOWN, classifier.getPhraseState());
+  TEST_ASSERT_EQUAL_UINT8(0, classifier.getSoundEnergy());
+  TEST_ASSERT_EQUAL_STRING("silence", classifier.getSoundEnergyStr());
+
+  // 2. Feed 1.5s of non-music ambient sound (e.g. talking / clatter on mid-bands, no beat regularity)
+  AudioFrame frame;
+  for (uint32_t t = 20; t <= 1500; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 25.0f;
+    frame.rawVolume = 30.0f;
+    frame.smoothedVolume = 25.0f;
+    frame.isPeak = false;
+    frame.majorPeakHz = 800.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 0;
+    frame.bands[4] = 40; // Mid frequencies only
+    classifier.processFrame(frame);
+  }
+
+  // After 1.5s (> onDelayMs of 500ms), presence is SOUND, semantic state is AMBIENT_NOISE
+  TEST_ASSERT_EQUAL_UINT8(SoundPresence::SOUND, classifier.getPresence());
+  TEST_ASSERT_TRUE(classifier.isSoundDetected());
+  TEST_ASSERT_EQUAL_STRING("Ambient Noise", classifier.getSemanticStateStr());
+  TEST_ASSERT_EQUAL_UINT8(AudioSemanticState::AMBIENT_NOISE, classifier.getSemanticState());
+  // Because Audio Type is not Music: Music Energy must be 0 and Music Phrase must be Unknown
+  TEST_ASSERT_EQUAL_STRING("Unknown", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_UINT8(MusicPhrase::UNKNOWN, classifier.getPhraseState());
+  TEST_ASSERT_EQUAL_UINT8(0, classifier.getSoundEnergy());
+  TEST_ASSERT_EQUAL_STRING("silence", classifier.getSoundEnergyStr());
+
+  // 3. Audio drops to silence for 3s (> offDelayMs of 2000ms)
+  for (uint32_t t = 1520; t <= 4500; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 1.0f;
+    frame.rawVolume = 2.0f;
+    frame.smoothedVolume = 1.0f;
+    frame.isPeak = false;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 0;
+    classifier.processFrame(frame);
+  }
+
+  // Audio Type is Silence <==> Audio Detected is Clear
+  TEST_ASSERT_EQUAL_UINT8(SoundPresence::QUIET, classifier.getPresence());
+  TEST_ASSERT_FALSE(classifier.isSoundDetected());
+  TEST_ASSERT_EQUAL_STRING("Silence", classifier.getSemanticStateStr());
+  TEST_ASSERT_EQUAL_UINT8(AudioSemanticState::SILENCE, classifier.getSemanticState());
+  TEST_ASSERT_EQUAL_STRING("Unknown", classifier.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_UINT8(MusicPhrase::UNKNOWN, classifier.getPhraseState());
+  TEST_ASSERT_EQUAL_UINT8(0, classifier.getSoundEnergy());
+  TEST_ASSERT_EQUAL_STRING("silence", classifier.getSoundEnergyStr());
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_initial_state_is_quiet_and_silence);
+  RUN_TEST(test_non_music_state_has_zero_energy_and_unknown_phrase_and_silence_clear_coupling);
   RUN_TEST(test_transient_noise_ignored);
   RUN_TEST(test_sustained_sound_triggers_presence);
   RUN_TEST(test_continuous_music_does_not_swallow_itself);

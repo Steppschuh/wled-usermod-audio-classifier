@@ -20,12 +20,13 @@ enum class AudioSemanticState : uint8_t {
 };
 
 enum class MusicPhrase : uint8_t {
-  VERSE = 0,
-  INTRO = 1,
-  BUILDUP = 2,
-  CHORUS = 3,
-  BREAKDOWN = 4,
-  OUTRO = 5
+  UNKNOWN = 0,
+  VERSE = 1,
+  INTRO = 2,
+  BUILDUP = 3,
+  CHORUS = 4,
+  BREAKDOWN = 5,
+  OUTRO = 6
 };
 
 enum class SoundEnergy : uint8_t {
@@ -133,7 +134,10 @@ public:
   // Semantic, Phrasing, Energy & BPM Telemetry
   AudioSemanticState getSemanticState() const { return semanticState; }
   const char* getSemanticStateStr() const;
-  MusicPhrase getPhraseState() const { return phraseState; }
+  MusicPhrase getPhraseState() const {
+    if (semanticState != AudioSemanticState::MUSIC) return MusicPhrase::UNKNOWN;
+    return phraseState;
+  }
   const char* getPhraseStateStr() const;
   float getMusicConfidence() const { return musicConfidence; }
   uint16_t getBPM() const {
@@ -142,9 +146,15 @@ public:
   }
   float getBeatProbability() const { return beatProbability; }
   float getBeatProbabilityPercent() const { return beatProbability * 100.0f; }
-  uint8_t getSoundEnergy() const { return (uint8_t)soundEnergy; }
+  uint8_t getSoundEnergy() const {
+    if (semanticState != AudioSemanticState::MUSIC) return 0;
+    return (uint8_t)soundEnergy;
+  }
   const char* getSoundEnergyStr() const;
-  SoundEnergy getSoundEnergyState() const { return soundEnergy; }
+  SoundEnergy getSoundEnergyState() const {
+    if (semanticState != AudioSemanticState::MUSIC) return SoundEnergy::SILENCE;
+    return soundEnergy;
+  }
   uint8_t getExpectedBeatIndex() const { return expectedBeatIndex; }
   uint8_t getExpectedBarIndex() const { return expectedBarIndex; }
 
@@ -186,7 +196,7 @@ private:
 
   // Experimental Classification & Phrasing
   AudioSemanticState semanticState = AudioSemanticState::SILENCE;
-  MusicPhrase phraseState = MusicPhrase::VERSE;
+  MusicPhrase phraseState = MusicPhrase::UNKNOWN;
   SoundEnergy soundEnergy = SoundEnergy::SILENCE;
   float musicConfidence = 0.0f;
   uint32_t lastPhraseChangeMs = 0;
@@ -243,7 +253,7 @@ private:
 
   // Outlier Detection & Revert Tracking
   SoundEnergy tentativePrevEnergy = SoundEnergy::SILENCE;
-  MusicPhrase tentativePrevPhrase = MusicPhrase::VERSE;
+  MusicPhrase tentativePrevPhrase = MusicPhrase::UNKNOWN;
   uint32_t tentativePrevPhraseStartMs = 0;
   uint32_t tentativeTransitionMs = 0;
   bool isTentativeTransition = false;

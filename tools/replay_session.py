@@ -105,7 +105,7 @@ class SimulatedAudioClassifier:
         self.pending_off_time = 0
 
         self.semantic_state = "silence"
-        self.phrase_state = "verse"
+        self.phrase_state = "unknown"
         self.sound_energy = SoundEnergy.SILENCE
         self.music_confidence = 0.0
         self.last_phrase_change_ms = 0
@@ -159,7 +159,7 @@ class SimulatedAudioClassifier:
 
         # Outlier Detection & Revert Tracking
         self.tentative_prev_energy = SoundEnergy.SILENCE
-        self.tentative_prev_phrase = "verse"
+        self.tentative_prev_phrase = "unknown"
         self.tentative_prev_phrase_start_ms = 0
         self.tentative_transition_ms = 0
         self.is_tentative_transition = False
@@ -202,22 +202,23 @@ class SimulatedAudioClassifier:
 
         # 5. Experimental semantic classification & phrasing
         if self.presence == "quiet":
-            hangover_active = (self.last_music_evidence_time > 0 and (now - self.last_music_evidence_time <= self.music_hold_ms))
-            if not hangover_active:
-                self.semantic_state = "silence"
-                self.phrase_state = "verse"
-                self.music_confidence = 0.0
-                self.beats_per_minute = 0
-                self.raw_bpm = 0.0
-                self.bpm_lock_count = 0
-                self.duration_between_beats = 0
-                self.duration_between_bars = 0
-                self.duration_between_phrases = 0
-                self.beat_probability = 0.0
-            else:
-                self._update_music_and_phrasing(now, lvl, raw, smth, pk, hz, mag, bands)
+            self.semantic_state = "silence"
+            self.phrase_state = "unknown"
+            self.sound_energy = SoundEnergy.SILENCE
+            self.music_confidence = 0.0
+            self.beats_per_minute = 0
+            self.raw_bpm = 0.0
+            self.bpm_lock_count = 0
+            self.duration_between_beats = 0
+            self.duration_between_bars = 0
+            self.duration_between_phrases = 0
+            self.beat_probability = 0.0
         else:
             self._update_music_and_phrasing(now, lvl, raw, smth, pk, hz, mag, bands)
+            if self.semantic_state == "silence":
+                self.semantic_state = "ambient_noise"
+                self.phrase_state = "unknown"
+                self.sound_energy = SoundEnergy.SILENCE
 
     def _update_1s_metrics(self, now):
         if self.frame_count_1s > 0:
@@ -283,12 +284,18 @@ class SimulatedAudioClassifier:
         else:
             self.is_pending_on = False
             if self.presence == "sound":
-                if not self.is_pending_off:
-                    self.is_pending_off = True
-                    self.pending_off_time = now
-                if now - self.pending_off_time >= self.off_delay_ms:
-                    self.presence = "quiet"
+                hangover_active = (self.semantic_state == "music" and
+                                   self.last_music_evidence_time > 0 and
+                                   (now - self.last_music_evidence_time <= self.music_hold_ms))
+                if hangover_active:
                     self.is_pending_off = False
+                else:
+                    if not self.is_pending_off:
+                        self.is_pending_off = True
+                        self.pending_off_time = now
+                    if now - self.pending_off_time >= self.off_delay_ms:
+                        self.presence = "quiet"
+                        self.is_pending_off = False
 
     def _update_music_and_phrasing(self, now, lvl, raw, smth, pk, hz, mag, bands):
         # 1. Band Energy Distribution & Spectral Flux
@@ -616,7 +623,7 @@ class SimulatedAudioClassifier:
         if self.beat_regularity > 0.50 and (now - self.last_beat_timestamp <= 3000):
             has_musical_evidence = True
             instant_confidence = self.beat_regularity
-        elif (((b01 >= b23 * 1.05 and b01 >= 10.0) or (high_energy >= 15.0 and b01 >= 20.0)) and not is_mid_overpowering and self.current_level > (self.noise_floor + 5.0)):
+        elif (((b01 >= b23 * 1.05 and b01 >= 10.0) or (high_energy >= 15.0 and b01 >= 20.0)) and not is_mid_overpowering and (self.current_level > (self.noise_floor + 5.0) or (lvl > (self.noise_floor + 4.0) and b01 >= 30.0))):
             has_musical_evidence = True
             instant_confidence = 0.75
 
@@ -632,13 +639,18 @@ class SimulatedAudioClassifier:
         if self.semantic_state == "music":
             hangover_active = (self.last_music_evidence_time > 0 and (now - self.last_music_evidence_time <= self.music_hold_ms))
             if not hangover_active:
-                if self.presence == "sound":
+                threshold = self.quiet_thresh
+                dynamic_threshold = self.noise_floor + self.margin
+                if dynamic_threshold > threshold:
+                    threshold = dynamic_threshold
+                if self.current_level > threshold:
                     self.semantic_state = "ambient_noise"
-                    self.sound_energy = SoundEnergy.NOISE
                 else:
                     self.semantic_state = "silence"
-                    self.sound_energy = SoundEnergy.SILENCE
-                self.phrase_state = "verse"
+                    self.presence = "quiet"
+                    self.is_pending_off = False
+                self.sound_energy = SoundEnergy.SILENCE
+                self.phrase_state = "unknown"
         else:
             if self.music_confidence >= 0.60 or (self.beat_regularity >= 0.70 and self.current_level > self.noise_floor + 5.0):
                 self.semantic_state = "music"
@@ -647,10 +659,12 @@ class SimulatedAudioClassifier:
                     self.music_confidence = 0.70
             elif self.presence == "sound":
                 self.semantic_state = "ambient_noise"
-                self.sound_energy = SoundEnergy.NOISE
+                self.sound_energy = SoundEnergy.SILENCE
+                self.phrase_state = "unknown"
             else:
                 self.semantic_state = "silence"
                 self.sound_energy = SoundEnergy.SILENCE
+                self.phrase_state = "unknown"
 
         # 9. Phrasing & SoundEnergy State Machine (Rave-Totem Algorithm)
         if self.semantic_state == "music":
@@ -855,7 +869,8 @@ class SimulatedAudioClassifier:
                 self.last_phrase_change_ms = now
                 self.last_expected_phrase_start = now
         else:
-            self.phrase_state = "verse"
+            self.phrase_state = "unknown"
+            self.sound_energy = SoundEnergy.SILENCE
             self.is_tentative_transition = False
 
         # 10. Dedicated Music Beat Probability

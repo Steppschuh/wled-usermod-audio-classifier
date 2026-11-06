@@ -197,6 +197,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     doc["stat_t"] = baseTopic + "phrase";
     doc["dev_cla"] = "enum";
     JsonArray opts = doc.createNestedArray("options");
+    opts.add("Unknown");
     opts.add("Intro");
     opts.add("Verse");
     opts.add("Buildup");
@@ -332,7 +333,7 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
   static uint32_t lastHeartbeatTime = 0;
   static bool lastSoundState = false;
   static AudioSemanticState lastSemanticState = AudioSemanticState::SILENCE;
-  static MusicPhrase lastPhraseState = MusicPhrase::VERSE;
+  static MusicPhrase lastPhraseState = MusicPhrase::UNKNOWN;
   static uint8_t lastSoundEnergy = 0;
   static uint16_t lastBpm = 0;
   static AudioSourceStatus lastSourceStatus = AudioSourceStatus::OK;
