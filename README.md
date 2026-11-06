@@ -10,22 +10,192 @@ This [WLED](https://github.com/wled/WLED) Usermod (V2) bridges the gap between W
 
 ---
 
-## 🎯 Purpose: Home Assistant Acoustic Presence
+## 🎯 Purpose & Why This Exists
 
-PIR motion sensors miss people sitting still, and mmWave radars cannot tell if a room is active with music, conversation, or media playback. Since commercial WLED controllers (like the **Gledopto GL-C-015WL-D / GL-C-010WL**) and DIY builds often live in central rooms with built-in microphones, this usermod turns them into dual-purpose devices:
+Traditional smart home presence sensors have major blind spots:
+- **PIR Motion Sensors** regularly trigger false "room clear" timeouts when occupants are sitting still (watching a movie, reading, or listening to music).
+- **mmWave Radars** can detect tiny chest movements, but cannot tell whether a room is silent, active with conversation, or rocking with music.
 
-1. **Keep your light shows**: Audio-reactive LED effects continue running in real time.
-2. **Power your automations**: Home Assistant gains debounced acoustic presence, sound levels, and room state classification (`Silence`, `Ambient Noise`, `Music`) to trigger lights, media players, and scenes.
+Since commercial WLED controllers (such as the **Gledopto GL-C-015WL-D / GL-C-010WL**) and custom DIY builds frequently reside in living rooms, kitchens, and media centers with built-in microphones, this usermod turns them into multi-purpose acoustic sensors:
+
+1. **Keep your light shows**: Audio-reactive LED effects continue running in real time without I2S conflicts or latency.
+2. **Supercharge Home Assistant automations**: Home Assistant gains debounced acoustic presence, sound levels, room state classification (`Silence`, `Ambient Noise`, `Music`), rhythm metrics (`BPM`, `Beat Probability`), and structural song phrasing (`Intro`, `Verse`, `Buildup`, `Chorus`, `Breakdown`, `Outro`).
+
+---
+
+## 💡 Example Automations & Use Cases
+
+Here are real-world automations made possible by combining WLED and Home Assistant with this usermod:
+
+### 1. Automatic Party Mode (Switch WLED Preset When Music Plays)
+Automatically switch your WLED strip from a cozy ambient light to an energetic audio-reactive preset when music begins, and smoothly restore ambient lighting when the music stops:
+
+```yaml
+alias: "WLED: Auto-Switch Music Preset"
+description: "Switch to Audio-Reactive preset when music starts; revert when quiet"
+trigger:
+  - platform: state
+    entity_id: sensor.wled_audio_type
+    to: "Music"
+    id: "music_started"
+  - platform: state
+    entity_id: sensor.wled_audio_type
+    from: "Music"
+    for:
+      seconds: 15
+    id: "music_stopped"
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: "music_started"
+        sequence:
+          - action: select.select_option
+            target:
+              entity_id: select.wled_preset
+            data:
+              option: "Audio Reactive Waves" # Your audio-reactive preset name
+      - conditions:
+          - condition: trigger
+            id: "music_stopped"
+        sequence:
+          - action: select.select_option
+            target:
+              entity_id: select.wled_preset
+            data:
+              option: "Warm White Relax" # Your relaxing ambient preset
+```
+
+---
+
+### 2. Track Structure Lighting (Chorus Drop & Buildup Escalation)
+React dynamically to the macro structure of songs. Crank the brightness and unleash vivid palettes on the `Chorus` / Drop, trigger escalating strobes during a `Buildup`, and settle into a smooth, dim glow during a `Breakdown`:
+
+```yaml
+alias: "WLED: Dynamic Song Phrase FX"
+description: "Adjust WLED effects and brightness based on song structure"
+trigger:
+  - platform: state
+    entity_id: sensor.wled_music_phrase
+action:
+  - choose:
+      # Peak Energy: Chorus / Drop
+      - conditions:
+          - condition: state
+            entity_id: sensor.wled_music_phrase
+            state: "Chorus"
+        sequence:
+          - action: light.turn_on
+            target:
+              entity_id: light.wled
+            data:
+              brightness_pct: 100
+              effect: "Freqwave" # High-energy effect
+
+      # Escalation: Buildup
+      - conditions:
+          - condition: state
+            entity_id: sensor.wled_music_phrase
+            state: "Buildup"
+        sequence:
+          - action: light.turn_on
+            target:
+              entity_id: light.wled
+            data:
+              brightness_pct: 80
+              effect: "Chunky"
+
+      # Tension Release / Breather: Breakdown
+      - conditions:
+          - condition: state
+            entity_id: sensor.wled_music_phrase
+            state: "Breakdown"
+        sequence:
+          - action: light.turn_on
+            target:
+              entity_id: light.wled
+            data:
+              brightness_pct: 35
+              effect: "Breathe"
+```
+
+---
+
+### 3. BPM-Adaptive Animation Speed
+Sync the animation speed of your LED effects directly to the detected track tempo using WLED's native JSON API:
+
+```yaml
+alias: "WLED: Sync Speed to BPM"
+description: "Scale WLED effect speed proportionally to detected track tempo"
+trigger:
+  - platform: state
+    entity_id: sensor.wled_bpm
+condition:
+  - condition: numeric_state
+    entity_id: sensor.wled_bpm
+    above: 59
+action:
+  - action: mqtt.publish
+    data:
+      topic: "wled/my_light/api"
+      payload: >
+        {
+          "seg": [{
+            "sx": {{ [([((states('sensor.wled_bpm') | float - 60) * 1.5 + 64), 255] | min), 32] | max | int }}
+          }]
+        }
+```
+
+---
+
+### 4. True Room Occupancy (Acoustic Presence Fallback)
+Prevent PIR motion sensors from plunging you into darkness while watching movies or talking on the couch. Combine PIR with `binary_sensor.audio_detected`:
+
+```yaml
+template:
+  - binary_sensor:
+      - name: "Living Room Occupied"
+        device_class: occupancy
+        state: >
+          {{ is_state('binary_sensor.living_room_pir_motion', 'on') or
+             is_state('binary_sensor.wled_audio_detected', 'on') }}
+        delay_off:
+          minutes: 5
+```
+
+---
+
+### 5. Late Night Noise & Disturbance Guard
+Send an alert or gently flash hallway lights red if sudden, loud sounds or shouting occur late at night:
+
+```yaml
+alias: "Alert: Late Night Noise Spike"
+trigger:
+  - platform: numeric_state
+    entity_id: sensor.wled_audio_level_peak
+    above: 75
+condition:
+  - condition: time
+    after: "23:00:00"
+    before: "06:30:00"
+action:
+  - action: notify.notify
+    data:
+      title: "Loud Noise Detected"
+      message: "Sound peak reached {{ states('sensor.wled_audio_level_peak') }}% in the living room."
+```
 
 ---
 
 ## ✨ Features
 
-- **Home Assistant Auto-Discovery**: Automatically discovers and attaches entities directly to your existing WLED device in Home Assistant over MQTT. Zero manual configuration.
-- **AudioReactive Coexistence**: Reads internal in-memory FFT and volume telemetry (`getUMData`) without competing for I2S microphone hardware.
-- **Freeze-Locked Noise Floor**: Computes room ambient baseline using a 10th-percentile filter over a 5-minute rolling window. Freezes automatically during active sound so continuous music playback never drifts into "ambient noise".
+- **Home Assistant Auto-Discovery**: Automatically configures and attaches entities directly to your existing WLED device in Home Assistant over MQTT. Zero manual YAML configuration required.
+- **AudioReactive Coexistence**: Reads internal in-memory FFT and volume telemetry (`getUMData`) without competing for I2S microphone hardware or dropping animation frames.
+- **Freeze-Locked Noise Floor**: Computes the true ambient room baseline using a 10th-percentile filter over a 5-minute rolling window. Freezes automatically during active sound so continuous music playback never drifts into "ambient noise".
 - **Debounced Presence Detection**: Configurable on-delay (1.2s) and off-delay (8.0s) suppress transient spikes (doors closing, claps) and prevent automations from flapping during song pauses.
-- **100% Local & Privacy Preserving**: All classification runs entirely on-device in volatile RAM. No audio is ever recorded or transmitted.
+- **Song Structure & Phrase Engine**: Distinguishes between `Intro`, `Verse`, `Buildup`, `Chorus`, `Breakdown`, and `Outro` with strict anti-churn hysteresis and macro-structure stability.
+- **Tempo & Beat Probability Tracking**: Estimates rhythm tempo (`BPM`) and confidence (`Beat Probability`) using low-frequency variance analysis.
+- **100% Local & Privacy Preserving**: All classification runs entirely on-device in volatile RAM. No audio is ever recorded, stored, or transmitted over the network.
 
 ---
 
@@ -33,17 +203,135 @@ PIR motion sensors miss people sitting still, and mmWave radars cannot tell if a
 
 When MQTT is connected, the following entities appear automatically under your WLED device in Home Assistant:
 
-| Entity Name | Domain | Type | Values / Unit | Icon | Description |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **`Audio Level RMS`** | `sensor` | Measurement | `0.0` – `100.0 %` | `mdi:volume-medium` | 1-second RMS average sound volume (updated at 1 Hz). |
-| **`Audio Level Peak`** | `sensor` | Measurement | `0.0` – `100.0 %` | `mdi:volume-high` | 1-second maximum sound peak (updated at 1 Hz). |
-| **`Audio Detected`** | `binary_sensor` | `sound` | `ON` / `OFF` | `mdi:ear-hearing` | Debounced presence indicator for active sound in the room. |
-| **`Audio Type`** | `sensor` | `enum` | `Silence`, `Ambient Noise`, `Music` | `mdi:waveform` | Contextual room acoustic state. |
-| **`Audio Source Status`** | `sensor` | Diagnostic | Text | `mdi:microphone-outline` | Live coupling health with AudioReactive and microphone stream. |
-| **`Music Phrase`** | `sensor` | `enum` | `Intro`, `Verse`, `Buildup`, `Chorus`, `Breakdown`, `Outro` | `mdi:playlist-music` | Musical phrasing and song structure state (when `experimental-music` is enabled). |
-| **`Music Energy`** | `sensor` | Measurement | `0` – `100 %` | `mdi:lightning-bolt` | Dynamic track & acoustic energy level (0%: silence, 10%: noise, 30%: outro, 40%: breakdown, 50%: buildup, 60%: intro, 80%: verse, 100%: chorus). |
-| **`BPM`** | `sensor` | Measurement | `60` – `240 bpm` | `mdi:metronome` | Detected musical tempo / rhythm speed. Locked during active beat sections (verse/chorus), held across breakdowns/bridges, and cleared to 0 when leaving music state. |
-| **`Music Beat Probability`** | `sensor` | Measurement | `0.0` – `100.0 %` | `mdi:pulse` | Real-time beat presence probability based on low-frequency variance (0% = silence/noise/ambient, 100% = active bass/beat). |
+### 🔊 Audio Detected
+- **Domain**: `binary_sensor`
+- **Device Class**: `sound`
+- **Values**: `ON` (Sound Detected) / `OFF` (Clear)
+- **MQTT Topic**: `<device>/audio/detected`
+- **Update Frequency**: On state change + periodic heartbeat
+
+Debounced presence indicator for active sound in the room. Suppresses transient acoustic spikes (such as claps or door slams) via the configurable `on-delay` (default: 1.2s) and prevents automations from flapping during quiet moments or between songs via the `off-delay` (default: 8.0s).
+
+> **Contract**: When `Audio Type` is `Silence`, `Audio Detected` is guaranteed to be `OFF`, and vice-versa.
+
+---
+
+### 🎶 Audio Type
+- **Domain**: `sensor`
+- **Device Class**: `enum`
+- **Values**: `Silence`, `Ambient Noise`, `Music`
+- **MQTT Topic**: `<device>/audio/type` (also mirrored to `<device>/audio/state`)
+- **Update Frequency**: On state change + periodic heartbeat
+
+High-level acoustic environment classification. Uses spectral entropy, low-frequency variance, and rhythmic periodicity to distinguish between:
+- `Silence`: Room sound is at or below the ambient noise floor.
+- `Ambient Noise`: Active acoustic energy (e.g. conversation, HVAC, dishes, footsteps) without rhythmic beat cadence.
+- `Music`: Harmonically structured audio with persistent rhythmic cadence or bass pulses.
+
+> **Contract**: Whenever `Audio Type` is not `Music`, `Music Energy` is reset to `0%` and `Music Phrase` is set to `Unknown`.
+
+---
+
+### 📊 Audio Level RMS
+- **Domain**: `sensor`
+- **Device Class**: `measurement`
+- **Values / Unit**: `0.0` – `100.0 %`
+- **Icon**: `mdi:volume-medium`
+- **MQTT Topic**: `<device>/audio/level`
+- **Update Frequency**: 1 Hz + periodic heartbeat
+
+Root Mean Square (RMS) rolling average sound volume over the last 1-second window. Ideal for real-time sound gauges, dashboards, history graphs, and automation thresholds.
+
+---
+
+### 📈 Audio Level Peak
+- **Domain**: `sensor`
+- **Device Class**: `measurement`
+- **Values / Unit**: `0.0` – `100.0 %`
+- **Icon**: `mdi:volume-high`
+- **MQTT Topic**: `<device>/audio/peak`
+- **Update Frequency**: 1 Hz + periodic heartbeat
+
+Maximum acoustic amplitude peak recorded within the last 1-second window. Responsive to instantaneous percussive transients, claps, bass drum hits, or sudden room noises.
+
+---
+
+### 🎼 Music Phrase
+- **Domain**: `sensor`
+- **Device Class**: `enum`
+- **Values**: `Unknown`, `Intro`, `Verse`, `Buildup`, `Chorus`, `Breakdown`, `Outro`
+- **Icon**: `mdi:playlist-music`
+- **MQTT Topic**: `<device>/audio/phrase`
+- **Update Frequency**: On state change + periodic heartbeat
+*(Available when `experimental-music` is enabled)*
+
+Song macro-structure classification designed around classic tension-and-release music arrangement:
+- `Intro`: Stripped-back initial beat or melodic hook.
+- `Verse`: Steady groove or vocal narrative section.
+- `Buildup`: Energy ramping up via volume crescendos, rising pitch sweeps, or accelerating snare rolls.
+- `Chorus`: Peak impact drop featuring heavy bass and the main melodic motif.
+- `Breakdown`: De-energized breather section where drums cut out and melodic pads/vocals remain. Protected by minimum dwell persistence (at least 20s / 10 bars) to prevent premature flipping.
+- `Outro`: Stripped-back mix-out section leading toward track conclusion.
+- `Unknown`: Audio is either silent, ambient noise, or still undergoing initial classification.
+
+---
+
+### ⚡ Music Energy
+- **Domain**: `sensor`
+- **Device Class**: `measurement`
+- **Values / Unit**: `0` – `100 %`
+- **Icon**: `mdi:lightning-bolt`
+- **MQTT Topic**: `<device>/audio/energy`
+- **Update Frequency**: 1 Hz + on state change + periodic heartbeat
+*(Available when `experimental-music` is enabled)*
+
+Quantized acoustic and musical energy level:
+- `0%`: Silence or non-music audio.
+- `10%`: Ambient background sound.
+- `30%`: Outro.
+- `40%`: Breakdown.
+- `50%`: Buildup.
+- `60%`: Intro.
+- `80%`: Verse.
+- `100%`: Chorus / Drop.
+
+---
+
+### ⏱️ BPM
+- **Domain**: `sensor`
+- **Device Class**: `measurement`
+- **Values / Unit**: `60` – `240 bpm` (`0` when inactive)
+- **Icon**: `mdi:metronome`
+- **MQTT Topic**: `<device>/audio/bpm`
+- **Update Frequency**: 1 Hz + on state change + periodic heartbeat
+*(Available when `experimental-music` is enabled)*
+
+Detected musical tempo in Beats Per Minute. Rejects octave jumping and eighth-note jitter. Locks during steady beat sections (Verse/Chorus), persists across quiet breakdowns and bridges, and resets cleanly to `0` when music ends.
+
+---
+
+### 💓 Music Beat Probability
+- **Domain**: `sensor`
+- **Device Class**: `measurement`
+- **Values / Unit**: `0.0` – `100.0 %`
+- **Icon**: `mdi:pulse`
+- **MQTT Topic**: `<device>/audio/beat_probability`
+- **Update Frequency**: 1 Hz + periodic heartbeat
+*(Available when `experimental-music` is enabled)*
+
+Confidence score indicating the presence of regular low-frequency rhythmic beats (0% = silence or non-rhythmic noise, 100% = persistent, high-confidence bass drum / beat sequence).
+
+---
+
+### 🩺 Audio Source Status
+- **Domain**: `sensor`
+- **Device Class**: Diagnostic
+- **Values**: Text string (e.g. `OK (Coupled with AudioReactive)`)
+- **Icon**: `mdi:microphone-outline`
+- **MQTT Topic**: `<device>/audio/status`
+- **Update Frequency**: On state change + periodic heartbeat
+
+Diagnostics reporting the coupling health between AudioClassifier and WLED's AudioReactive engine. Displays warnings if AudioReactive is disabled, if AGC is enabled, or if no microphone frames have been received.
 
 ---
 
@@ -194,6 +482,27 @@ Simple moving-average baselines suffer from **baseline creep**: continuous music
 AudioClassifier solves this using two mechanisms:
 1. **10th-Percentile Sliding Window**: Sound levels are binned into a 101-bucket histogram over a 300-second (5-minute) circular buffer. The true room noise floor is extracted at the 10th percentile.
 2. **Noise Floor Freezing**: Whenever sound presence is detected (`SOUND` state), histogram ingestion is frozen. The baseline remains locked to the true room baseline even during hours of continuous music. Once sound stops and the `off-delay` timer elapses, normal background tracking resumes.
+
+### Beat Regularity & Tempo Tracking
+Beat detection processes energy in sub-bass and bass frequency bands (Bands 0 and 1). A circular history of peak timestamps calculates inter-beat intervals (IBI), rejects spurious eighth-note harmonics, and locks into stable BPM (60–240 BPM). Tempo estimates are held across quiet breakdowns rather than dropping to zero.
+
+### Phrasing State Machine & Anti-Churn Stability
+The phrase classifier models the two-wave tension and release structure of electronic music:
+- Transitions into **Breakdown** enforce minimum dwell persistence ($\ge 20$s / 10 bars) to prevent rapid bouncing into `Outro`.
+- Transitions into **Buildup** identify volume crescendos without kicks, rising pitch sweeps, and snare rolls.
+- Hysteresis prevents oscillation between quiet breakdowns and outros, with an automated phrase stability penalty test guarding against micro-flips (< 2s).
+
+---
+
+## 🧪 Testing & Development
+
+The core classification logic (`src/classifier.{h,cpp}`) is 100% decoupled from the ESP32 hardware and WLED framework. You can run all 25 unit tests on your host machine in under 2 seconds:
+
+```bash
+pio test -e native
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for architecture details, test descriptions, and development guides.
 
 ---
 

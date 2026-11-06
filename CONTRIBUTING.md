@@ -55,4 +55,6 @@ pio run -e esp32dev
 1. Ensure all native unit tests pass: `pio test -e native`.
 2. Adhere to the code formatting guidelines defined in `.editorconfig` and `.clang-format` (2-space indentation).
 3. Update documentation and `CHANGELOG.md` when introducing new features or modifying configuration options.
+4. For AI-assisted workflows, OTA flashing recipes, and architecture invariants, see [AGENTS.md](AGENTS.md).
+
 
