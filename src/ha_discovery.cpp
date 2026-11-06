@@ -186,8 +186,8 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
   }
 
-  // 5. Music Phrase Sensor (Optional / Experimental)
-  if (experimentalEnabled) {
+  // 5. Music Phrase Sensor
+  {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
@@ -220,7 +220,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
   }
 
   // 6. Music Energy Sensor (0-100%)
-  if (experimentalEnabled) {
+  {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
@@ -247,7 +247,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
   }
 
   // 7. BPM Sensor
-  if (experimentalEnabled) {
+  {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
@@ -274,7 +274,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
   }
 
   // 8. Music Beat Probability Sensor (0.00 - 1.00)
-  if (experimentalEnabled) {
+  {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
@@ -315,15 +315,13 @@ void HomeAssistantAudioDiscovery::removeDiscovery(bool experimentalEnabled) {
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_type/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_state/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_status/config").c_str(), 0, true, "");
-  if (experimentalEnabled) {
-    mqtt->publish(("homeassistant/sensor/" + chipId + "_music_phrase/config").c_str(), 0, true, "");
-    mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_phrase/config").c_str(), 0, true, "");
-    mqtt->publish(("homeassistant/sensor/" + chipId + "_music_energy/config").c_str(), 0, true, "");
-    mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_energy/config").c_str(), 0, true, "");
-    mqtt->publish(("homeassistant/sensor/" + chipId + "_bpm/config").c_str(), 0, true, "");
-    mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_bpm/config").c_str(), 0, true, "");
-    mqtt->publish(("homeassistant/sensor/" + chipId + "_music_beat_probability/config").c_str(), 0, true, "");
-  }
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_music_phrase/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_phrase/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_music_energy/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_energy/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_bpm/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_bpm/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/sensor/" + chipId + "_music_beat_probability/config").c_str(), 0, true, "");
 }
 
 void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classifier, const AudioReactiveSource& source, bool force) {

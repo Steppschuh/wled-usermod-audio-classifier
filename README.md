@@ -10,7 +10,7 @@ This [WLED](https://github.com/wled/WLED) Usermod (V2) bridges the gap between W
 
 ---
 
-## 🎯 Purpose & Why This Exists
+## Purpose & Why This Exists
 
 Traditional smart home presence sensors have major blind spots:
 - **PIR Motion Sensors** regularly trigger false "room clear" timeouts when occupants are sitting still (watching a movie, reading, or listening to music).
@@ -23,7 +23,7 @@ Since commercial WLED controllers (such as the **Gledopto GL-C-015WL-D / GL-C-01
 
 ---
 
-## ✨ Features
+## Features
 
 - **Home Assistant Auto-Discovery**: Automatically configures and attaches entities directly to your existing WLED device in Home Assistant over MQTT. Zero manual YAML configuration required.
 - **AudioReactive Coexistence**: Reads internal in-memory FFT and volume telemetry (`getUMData`) without competing for I2S microphone hardware or dropping animation frames.
@@ -35,16 +35,16 @@ Since commercial WLED controllers (such as the **Gledopto GL-C-015WL-D / GL-C-01
 
 ---
 
-## 📡 Home Assistant Entities
+## Home Assistant Entities
 
 When MQTT is connected, the following entities appear automatically under your WLED device in Home Assistant:
 
-### 🔊 Audio Detected
+### Audio Detected
 A debounced binary sensor reporting `ON` when active sound is present and `OFF` when the room is quiet. It filters out brief acoustic transients like door slams or hand claps using a configurable on-delay (1.2s default) and prevents presence automations from flapping between songs via an off-delay (8.0s default).
 
 ---
 
-### 🎶 Audio Type
+### Audio Type
 Contextual acoustic environment sensor that classifies the room into one of three states:
 - `Silence`: Room noise is at or below the resting ambient noise floor.
 - `Ambient Noise`: Sustained non-musical sound such as conversation, television dialogue, HVAC fans, or kitchen activity.
@@ -52,19 +52,17 @@ Contextual acoustic environment sensor that classifies the room into one of thre
 
 ---
 
-### 📊 Audio Level RMS
+### Audio Level RMS
 Continuous measurement reporting the 1-second rolling RMS (Root Mean Square) average volume from `0.0%` to `100.0%`. Updated every second, making it ideal for dashboard gauges, sound level charts, and automation conditions.
 
 ---
 
-### 📈 Audio Level Peak
+### Audio Level Peak
 Continuous measurement reporting the maximum acoustic peak recorded over the last 1-second window from `0.0%` to `100.0%`. Captures instantaneous transients, loud impacts, and percussion hits.
 
 ---
 
-### 🎼 Music Phrase
-*(Available when `experimental-music` is enabled)*
-
+### Music Phrase
 Song macro-structure classification designed around classic tension-and-release music arrangement:
 - `Intro`: Stripped-back initial beat or melodic theme.
 - `Verse`: Steady vocal or melodic groove.
@@ -76,9 +74,7 @@ Song macro-structure classification designed around classic tension-and-release 
 
 ---
 
-### ⚡ Music Energy
-*(Available when `experimental-music` is enabled)*
-
+### Music Energy
 Quantized dynamic track and room energy measurement ranging from `0%` to `100%`:
 - `0%`: Silence or non-musical audio.
 - `10%`: Ambient background sound.
@@ -91,26 +87,22 @@ Quantized dynamic track and room energy measurement ranging from `0%` to `100%`:
 
 ---
 
-### ⏱️ BPM
-*(Available when `experimental-music` is enabled)*
-
+### BPM
 Detected musical tempo ranging from `60` to `240 bpm` (`0` when music is not active). Rejects octave jumping and eighth-note jitter, locks during steady beat sections, and is held stably across quiet breakdowns.
 
 ---
 
-### 💓 Music Beat Probability
-*(Available when `experimental-music` is enabled)*
-
+### Music Beat Probability
 Confidence score from `0.0%` to `100.0%` indicating the likelihood of regular rhythmic beats based on low-frequency variance analysis (0% represents non-rhythmic noise or silence, while 100% indicates consistent, high-confidence bass rhythm).
 
 ---
 
-### 🩺 Audio Source Status
+### Audio Source Status
 Diagnostic sensor reporting live coupling health between AudioClassifier and WLED's AudioReactive engine (e.g. `OK (Coupled with AudioReactive)`), alerting you if AudioReactive is disabled, if AGC is active, or if microphone frames stop arriving.
 
 ---
 
-## 💡 Example Automations & Use Cases
+## Example Automations & Use Cases
 
 Looking for inspiration? Here are a few ways to supercharge your smart home using these entities:
 
@@ -122,14 +114,14 @@ Looking for inspiration? Here are a few ways to supercharge your smart home usin
 
 ---
 
-## 🚀 Installation & Flashing
+## Installation & Flashing
 
 Pre-compiled binaries are available on the **[Releases](https://github.com/Steppschuh/wled-usermod-audio-classifier/releases)** page.
 
 ### Method 1: Web Browser OTA Update (Existing WLED Device)
 1. Download the latest OTA binary (`*_ota.bin`, e.g. `wled_audio_classifier_esp32dev_ota.bin`) from [Releases](https://github.com/Steppschuh/wled-usermod-audio-classifier/releases).
 2. Open your controller's web interface (`http://<wled-ip>`).
-3. Navigate to **Config (⚙️) > Security & Updates**.
+3. Navigate to **Config > Security & Updates**.
 4. Under **Manual OTA Update**, click **Choose File**, select the `*_ota.bin` file, and click **Update!**.
 5. The device reboots after ~30–45 seconds, preserving your existing WiFi credentials and LED settings.
 6. Verify under **Config > Usermods** that both `AudioReactive` and `AudioClassifier` are enabled.
@@ -169,7 +161,7 @@ To receive auto-discovered entities, WLED and Home Assistant must be connected t
    - If you do not have an MQTT broker running yet, install the official **Mosquitto broker** add-on via **Settings > Add-ons > Add-on Store**.
    - Ensure **Enable discovery** is active in the MQTT integration configuration (enabled by default).
 2. **Configure MQTT in WLED**:
-   - Open your controller's web interface and navigate to **Config (⚙️) > Sync Interfaces > MQTT**.
+   - Open your controller's web interface and navigate to **Config > Sync Interfaces > MQTT**.
    - Check **Enable MQTT**.
    - Enter your MQTT **Broker** IP or hostname (typically your Home Assistant server IP), **Port** (`1883`), **User**, and **Password**.
    - Keep the default **Device Topic** (`wled/%mac%`) or choose a custom topic.
@@ -179,7 +171,7 @@ To receive auto-discovered entities, WLED and Home Assistant must be connected t
 
 ---
 
-## ⚙️ Configuration & Tuning
+## Configuration & Tuning
 
 ### 1. AudioClassifier Usermod Settings
 Configure under **Config > Usermods > AudioClassifier**:
@@ -193,7 +185,6 @@ Configure under **Config > Usermods > AudioClassifier**:
 | **`On Delay`** | `1200 ms` | Continuous sound duration required before triggering presence. |
 | **`Off Delay`** | `8000 ms` | Continuous silence duration required before clearing presence. |
 | **`Music Hold`** | `30000 ms` | Hold time in music state during quiet bridges/breakdowns. |
-| **`Experimental Music`** | `false` | Enable beat regularity and musical phrasing tracking (`Intro`, `Verse`, `Buildup`, `Chorus`, `Breakdown`, `Outro`). |
 | **`Stream Raw`** | `false` | Stream raw audio frames over MQTT (`wled/<device>/audio/raw`) for analysis. |
 
 ### 2. AudioReactive Settings
@@ -207,7 +198,7 @@ Open **Config > Usermods > AudioReactive** to configure the audio input stage:
 | **`gain`** | `40` – `70` | Digital amplification multiplier. Scales signal so normal conversation hits ~20–35%. |
 
 #### Diagnostic Statuses
-The info modal (ℹ️) and Home Assistant report coupling health:
+The info modal and Home Assistant report coupling health:
 - `OK (Coupled with AudioReactive)`: Operational.
 - `Warning: AudioReactive is disabled in settings`: Enable AudioReactive in Usermods settings.
 - `Warning: AudioReactive AGC is enabled (relative levels will float)`: Relative levels adjust dynamically with AGC.
@@ -217,7 +208,7 @@ The info modal (ℹ️) and Home Assistant report coupling health:
 
 ### 3. Step-by-Step Calibration Guide
 
-Follow this 3-step procedure using WLED's live status readouts (in the **Info modal ℹ️** or Home Assistant `Sound Level`):
+Follow this 3-step procedure using WLED's live status readouts (in the **Info modal** or Home Assistant `Sound Level`):
 
 #### Step 1: Calibrate Squelch (Noise Gate)
 1. Keep the room **completely quiet** (no speech, no media, only resting ambient background).
@@ -256,7 +247,7 @@ Follow this 3-step procedure using WLED's live status readouts (in the **Info mo
 
 ---
 
-## 🧩 Architecture & Technical Design
+## Architecture & Technical Design
 
 ### Noise Floor Estimation & Stability
 Simple moving-average baselines suffer from **baseline creep**: continuous music or conversation gradually inflates the baseline, causing the system to classify ongoing sound as ambient room silence.
@@ -276,7 +267,7 @@ The phrase classifier models the two-wave tension and release structure of elect
 
 ---
 
-## 🧪 Testing & Development
+## Testing & Development
 
 The core classification logic (`src/classifier.{h,cpp}`) is 100% decoupled from the ESP32 hardware and WLED framework. You can run all 25 unit tests on your host machine in under 2 seconds:
 
@@ -297,7 +288,7 @@ Fixtures are replayed and verified directly within the Unity test suite via `Fix
 
 ---
 
-## 📄 License
+## License
 
 Licensed under the **European Union Public Licence v1.2** ([EUPL-1.2](LICENSE)).
 

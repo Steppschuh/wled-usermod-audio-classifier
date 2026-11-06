@@ -23,13 +23,11 @@ private:
   static const char _marginFloor[];
   static const char _onDelay[];
   static const char _offDelay[];
-  static const char _experimental[];
   static const char _musicHold[];
   static const char _streamRaw[];
 
   bool enabled = true;
   bool haDiscoveryEnabled = true;
-  bool experimentalEnabled = false;
   bool rawStreamEnabled = false;
   uint32_t lastRawStreamMs = 0;
 

@@ -108,7 +108,7 @@ struct ClassifierConfig {
   float marginAboveFloorPercent = 4.0f;   // Dynamic margin above background noise floor
   uint32_t onDelayMs = 1200;              // Required sustain to trigger SOUND state
   uint32_t offDelayMs = 8000;             // Required sustain to return to QUIET state
-  bool experimentalEnabled = false;       // Enable experimental music & phrase detection
+  bool experimentalEnabled = true;        // Enable music & phrase detection (defaults to true)
   uint32_t musicHoldMs = 30000;           // Hold music state for up to 30s during breakdowns/quiet sections
 };
 
