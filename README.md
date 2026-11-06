@@ -73,6 +73,9 @@ Add the usermod to your `platformio_override.ini`:
 [platformio]
 default_envs = esp32dev
 
+[common]
+default_usermods = audioreactive
+
 [env:esp32dev]
 custom_usermods =
   ${common.default_usermods}

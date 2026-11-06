@@ -117,6 +117,9 @@ jobs:
           [platformio]
           default_envs = ${{ matrix.env }}
 
+          [common]
+          default_usermods = audioreactive
+
           [env:${{ matrix.env }}]
           custom_usermods =
             \${common.default_usermods}
