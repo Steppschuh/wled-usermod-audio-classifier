@@ -27,6 +27,71 @@ class SoundEnergy:
     CHORUS = 100
 
 
+class PhrasePenaltyCalculator:
+    def __init__(self):
+        self.history = []  # list of (phrase, time_sec)
+        self.total_dwell_sum = 0.0
+        self.dwell_count = 0
+        self.accumulated_penalty = 0.0
+        self.micro_flips = 0
+        self.rapid_flips = 0
+        self.ping_pongs = 0
+        self.min_dwell = 9999.0
+
+    def record_frame(self, time_sec: float, current_phrase: str):
+        if not current_phrase:
+            return
+        norm = current_phrase.strip().lower().replace(" ", "_").replace("-", "_")
+        if not norm or norm == "unknown":
+            return
+        if not self.history:
+            self.history.append((norm, time_sec))
+            return
+
+        if self.history[-1][0] == norm:
+            return
+
+        dwell = time_sec - self.history[-1][1]
+        if dwell > 0.0:
+            self.total_dwell_sum += dwell
+            self.dwell_count += 1
+            if dwell < self.min_dwell:
+                self.min_dwell = dwell
+
+            # 1. Severe penalty for micro-flips (< 2.0s)
+            if dwell < 2.0:
+                self.micro_flips += 1
+                p = max(8.0, 15.0 * (1.0 - (dwell / 2.0)))
+                self.accumulated_penalty += p
+            # 2. Rapid flips (< 5.0s)
+            elif dwell < 5.0:
+                self.rapid_flips += 1
+                p = 6.0 * ((5.0 - dwell) / 3.0)
+                self.accumulated_penalty += p
+
+            # 3. Ping-pong oscillation: A -> B -> A within <= 4.0s
+            if len(self.history) >= 2:
+                two_ago_phrase, two_ago_time = self.history[-2]
+                if two_ago_phrase == norm and (time_sec - two_ago_time) <= 4.0:
+                    self.ping_pongs += 1
+                    self.accumulated_penalty += 10.0
+
+        self.history.append((norm, time_sec))
+
+    def get_metrics(self):
+        stability_score = max(0.0, 100.0 - self.accumulated_penalty)
+        return {
+            "penalty_score": self.accumulated_penalty,
+            "stability_score": stability_score,
+            "total_transitions": max(0, len(self.history) - 1),
+            "micro_flips": self.micro_flips,
+            "rapid_flips": self.rapid_flips,
+            "ping_pongs": self.ping_pongs,
+            "min_dwell_sec": self.min_dwell if self.dwell_count > 0 else 0.0,
+            "avg_dwell_sec": (self.total_dwell_sum / self.dwell_count) if self.dwell_count > 0 else 0.0,
+        }
+
+
 class RollingBuffer:
     def __init__(self, capacity: int):
         self.capacity = capacity
@@ -668,6 +733,14 @@ class SimulatedAudioClassifier:
 
         # 9. Phrasing & SoundEnergy State Machine (Rave-Totem Algorithm)
         if self.semantic_state == "music":
+            if self.sound_energy == SoundEnergy.SILENCE:
+                self.sound_energy = SoundEnergy.INTRO
+                self.phrase_state = "intro"
+                self.short_bass_energy = bass_energy
+                self.long_bass_energy = bass_energy
+                self.last_energy_update_time = now
+                self.last_phrase_change_ms = now
+
             energy_before_update = self.sound_energy
             phrase_before_update = self.phrase_state
 
@@ -738,7 +811,7 @@ class SimulatedAudioClassifier:
                 self.peak_1s_level < 12.0 and self.average_1s_level < 8.0
             )
             no_beats_recent = (duration_since_last_beat > 1200 or bars_without_beats >= 1)
-            has_active_beat_groove = (duration_since_last_beat <= (bar_dur * 3 // 2)) and (self.beat_probability >= 0.20 or constant_beats)
+            has_active_beat_groove = (bars_without_beats == 0) and (duration_since_last_beat <= (bar_dur * 5 // 4)) and (self.beat_probability >= 0.20 or constant_beats)
 
             updated_energy = self.sound_energy
 
@@ -749,26 +822,35 @@ class SimulatedAudioClassifier:
                     updated_energy = SoundEnergy.OUTRO
                 else:
                     updated_energy = SoundEnergy.BREAKDOWN
-            elif (self.peak_1s_level >= 45.0 or self.average_1s_level >= 34.0 or drop_in_last_phrase) and (beat_in_last_phrase or beat_detected):
+            elif ((self.peak_1s_level >= 45.0 or self.average_1s_level >= 34.0) or (drop_in_last_phrase and (self.peak_1s_level >= 36.0 or self.average_1s_level >= 26.0))) and (beat_in_last_phrase or beat_detected):
                 updated_energy = SoundEnergy.CHORUS
             elif has_active_beat_groove and (self.peak_1s_level >= 14.0 or self.average_1s_level >= 10.0):
                 if self.sound_energy == SoundEnergy.CHORUS:
                     if not self.is_tentative_transition and time_since_phrase_change < phrase_dur and self.peak_1s_level >= 32.0:
                         updated_energy = SoundEnergy.CHORUS
                     elif near_phrase_boundary and (not drop_in_last_phrase or bass_trend < 0.90) and (self.peak_1s_level < 48.0):
-                        updated_energy = SoundEnergy.VERSE
+                        if bars_without_beats == 0 and self.current_level >= 18.0 and bass_energy >= 20.0:
+                            updated_energy = SoundEnergy.VERSE
+                        else:
+                            updated_energy = SoundEnergy.BREAKDOWN
                     else:
                         updated_energy = SoundEnergy.CHORUS
+                elif self.sound_energy == SoundEnergy.INTRO and time_since_phrase_change < phrase_dur:
+                    updated_energy = SoundEnergy.INTRO
                 else:
                     updated_energy = SoundEnergy.VERSE
+            elif (self.sound_energy in (SoundEnergy.BREAKDOWN, SoundEnergy.OUTRO, SoundEnergy.VERSE)) and (self.peak_1s_level >= 16.0) and (
+                (bands[10] >= 35 and bands[11] >= 45) or (bass_trend > 1.25 and bars_without_beats >= 1 and self.peak_1s_level >= 22.0)
+            ):
+                updated_energy = SoundEnergy.BUILDUP
             else:
-                if self.sound_energy in (SoundEnergy.CHORUS, SoundEnergy.BREAKDOWN, SoundEnergy.OUTRO) or is_volume_collapsed or no_beats_recent or bass_trend < 0.50 or (bass_ratio < 0.15 and self.current_level > self.noise_floor + 2.0):
-                    if self.sound_energy in (SoundEnergy.BREAKDOWN, SoundEnergy.OUTRO) and (bars_since_energy_update >= 8 or self.current_level < self.noise_floor + 3.0):
+                if self.sound_energy == SoundEnergy.OUTRO:
+                    updated_energy = SoundEnergy.OUTRO
+                elif self.sound_energy in (SoundEnergy.CHORUS, SoundEnergy.BREAKDOWN) or is_volume_collapsed or no_beats_recent or bass_trend < 0.50 or (bass_ratio < 0.15 and self.current_level > self.noise_floor + 2.0):
+                    if self.sound_energy == SoundEnergy.BREAKDOWN and (bars_since_energy_update >= 8 or self.current_level < self.noise_floor + 3.0):
                         updated_energy = SoundEnergy.OUTRO
                     else:
                         updated_energy = SoundEnergy.BREAKDOWN
-                elif bass_trend > 1.15 or (now - self.last_drop_timestamp > phrase_dur and bars_without_beats <= 4 and self.peak_1s_level >= 12.0):
-                    updated_energy = SoundEnergy.BUILDUP
                 else:
                     updated_energy = SoundEnergy.INTRO
 
@@ -777,33 +859,33 @@ class SimulatedAudioClassifier:
                 if updated_energy > self.sound_energy:
                     prev_energy = self.sound_energy
                     if self.sound_energy == SoundEnergy.OUTRO:
-                        if drop_in_last_phrase or self.peak_1s_level >= 45.0:
+                        if updated_energy == SoundEnergy.CHORUS or self.peak_1s_level >= 45.0:
                             self.sound_energy = SoundEnergy.CHORUS
                         elif updated_energy >= SoundEnergy.VERSE:
                             self.sound_energy = SoundEnergy.VERSE
                         else:
                             self.sound_energy = updated_energy
                     elif self.sound_energy == SoundEnergy.INTRO:
-                        if drop_in_last_phrase or self.peak_1s_level >= 45.0:
+                        if updated_energy == SoundEnergy.CHORUS or self.peak_1s_level >= 45.0:
                             self.sound_energy = SoundEnergy.CHORUS
                         elif updated_energy >= SoundEnergy.VERSE:
                             self.sound_energy = SoundEnergy.VERSE
                         else:
                             self.sound_energy = updated_energy
                     elif self.sound_energy == SoundEnergy.BREAKDOWN:
-                        if drop_in_last_phrase or self.peak_1s_level >= 45.0:
+                        if updated_energy == SoundEnergy.CHORUS or self.peak_1s_level >= 45.0:
                             self.sound_energy = SoundEnergy.CHORUS
                         elif updated_energy >= SoundEnergy.VERSE:
                             self.sound_energy = SoundEnergy.VERSE
                         else:
                             self.sound_energy = updated_energy
                     elif self.sound_energy == SoundEnergy.VERSE:
-                        if drop_in_last_phrase or self.peak_1s_level >= 45.0:
+                        if updated_energy == SoundEnergy.CHORUS or self.peak_1s_level >= 45.0:
                             self.sound_energy = SoundEnergy.CHORUS
                         elif bass_trend > 1.25:
                             self.sound_energy = SoundEnergy.BUILDUP
                     elif self.sound_energy == SoundEnergy.BUILDUP:
-                        if drop_in_last_phrase or (bass_trend > 1.4 and (beat_in_last_bar or beat_detected)) or self.peak_1s_level >= 45.0:
+                        if updated_energy == SoundEnergy.CHORUS or (drop_in_last_phrase and (self.peak_1s_level >= 36.0 or self.average_1s_level >= 26.0)) or self.peak_1s_level >= 45.0:
                             self.sound_energy = SoundEnergy.CHORUS
                     else:
                         self.sound_energy = updated_energy
@@ -816,7 +898,7 @@ class SimulatedAudioClassifier:
                                 self.sound_energy = SoundEnergy.BREAKDOWN
                                 self.last_energy_update_time = now
                         else:
-                            if beat_in_last_bar and has_active_beat_groove:
+                            if updated_energy == SoundEnergy.VERSE and beat_in_last_bar and has_active_beat_groove:
                                 self.sound_energy = SoundEnergy.VERSE
                             else:
                                 self.sound_energy = SoundEnergy.BREAKDOWN
@@ -984,6 +1066,7 @@ def main():
     prev_phrase = None
     state_flips = 0
     phrase_flips = 0
+    phrase_calc = PhrasePenaltyCalculator()
 
     last_snap_sec = -1
     last_report_sec = -1.0
@@ -1012,6 +1095,7 @@ def main():
         bands = f.get("bands", [0] * 16)
 
         classifier.process_frame(t, lvl, raw, smth, pk, hz, mag, bands)
+        phrase_calc.record_frame(t_sec, classifier.phrase_state)
 
         cur_sec = int(t_sec)
         if cur_sec != last_snap_sec:
@@ -1254,8 +1338,11 @@ def main():
         excess_flips = max(0, (state_flips + phrase_flips) - expected_flips * 2)
         stability_score = max(0.0, 100.0 - (excess_flips * 2.5))
 
+        phrase_metrics = phrase_calc.get_metrics()
+        combined_stability = (0.5 * stability_score) + (0.5 * phrase_metrics["stability_score"])
+
         # Overall composite benchmark score (0% - 100%)
-        overall_score = (0.35 * semantic_acc) + (0.25 * presence_acc) + (0.25 * phrase_acc) + (0.15 * stability_score)
+        overall_score = (0.35 * semantic_acc) + (0.25 * presence_acc) + (0.25 * phrase_acc) + (0.15 * combined_stability)
 
         print("=" * 80)
         print("📊 CONTINUOUS BENCHMARK EVALUATION & ACCURACY METRICS")
@@ -1265,6 +1352,7 @@ def main():
         print(f"🎶 Semantic State Accuracy:  {semantic_acc:5.1f}%  (Music vs Ambient vs Silence)")
         print(f"🎼 Phrase Alignment Score:   {phrase_acc:5.1f}%  (Verse / Chorus / Breakdown / Outro)")
         print(f"🌊 Stability / Anti-Flap:    {stability_score:5.1f}%  ({state_flips} state flips, {phrase_flips} phrase flips)")
+        print(f"🎼 Phrase Anti-Churn:        {phrase_metrics['stability_score']:5.1f}%  (Penalty: -{phrase_metrics['penalty_score']:.1f}, Micro-Flips: {phrase_metrics['micro_flips']}, Ping-Pongs: {phrase_metrics['ping_pongs']})")
         if ground_truth_bpm > 0.0:
             print(f"🎵 BPM Accuracy:             {bpm_acc:5.1f}%  (MAE: {bpm_mae:.1f} BPM, Ground Truth: {ground_truth_bpm} BPM, {bpm_eval_count}s)")
         print("-" * 80)

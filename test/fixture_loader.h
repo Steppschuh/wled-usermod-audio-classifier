@@ -21,15 +21,134 @@ struct TrackSegment {
   std::string phrase;
 };
 
+struct PhrasePenaltyMetrics {
+  float penaltyScore = 0.0f;       // Total penalty points accumulated
+  float stabilityScore = 100.0f;   // 0% to 100%
+  size_t totalTransitions = 0;
+  size_t microFlips = 0;          // Dwell < 2.0s (e.g. flipping every second)
+  size_t rapidFlips = 0;          // Dwell < 5.0s (< 2-3 bars at typical EDM tempo)
+  size_t pingPongs = 0;           // A -> B -> A within <= 4.0s
+  float minDwellSec = 9999.0f;
+  float avgDwellSec = 0.0f;
+};
+
+static inline std::string normalizeStr(const std::string& s) {
+  std::string out;
+  for (char c : s) {
+    if (c == ' ' || c == '-') out += '_';
+    else out += (char)tolower(c);
+  }
+  return out;
+}
+
+class PhrasePenaltyCalculator {
+private:
+  struct PhraseHistoryEntry {
+    std::string phrase;
+    float startSec = 0.0f;
+  };
+  std::vector<PhraseHistoryEntry> history;
+  float totalDwellSum = 0.0f;
+  size_t dwellCount = 0;
+  float accumulatedPenalty = 0.0f;
+  size_t microFlips = 0;
+  size_t rapidFlips = 0;
+  size_t pingPongs = 0;
+  float minDwell = 9999.0f;
+
+public:
+  void reset() {
+    history.clear();
+    totalDwellSum = 0.0f;
+    dwellCount = 0;
+    accumulatedPenalty = 0.0f;
+    microFlips = 0;
+    rapidFlips = 0;
+    pingPongs = 0;
+    minDwell = 9999.0f;
+  }
+
+  void recordFrame(float timeSec, const std::string& currentPhrase) {
+    std::string norm = normalizeStr(currentPhrase);
+    if (norm.empty() || norm == "unknown") return;
+    if (history.empty()) {
+      history.push_back({norm, timeSec});
+      return;
+    }
+
+    if (history.back().phrase == norm) {
+      return; // No change
+    }
+
+    // Phrase changed!
+    float dwell = timeSec - history.back().startSec;
+    if (dwell > 0.0f) {
+      totalDwellSum += dwell;
+      dwellCount++;
+      if (dwell < minDwell) minDwell = dwell;
+
+      // 1. Severe penalty for micro-flips (< 2.0s: jumping between phrases every second)
+      if (dwell < 2.0f) {
+        microFlips++;
+        float p = 15.0f * (1.0f - (dwell / 2.0f));
+        if (p < 8.0f) p = 8.0f;
+        accumulatedPenalty += p;
+      }
+      // 2. Penalty for rapid flips (< 5.0s / < 2-3 bars at typical EDM tempo)
+      else if (dwell < 5.0f) {
+        rapidFlips++;
+        float p = 6.0f * ((5.0f - dwell) / 3.0f);
+        accumulatedPenalty += p;
+      }
+
+      // 3. Ping-pong oscillation penalty: A -> B -> A within <= 4.0s
+      if (history.size() >= 2) {
+        const auto& twoAgo = history[history.size() - 2];
+        if (twoAgo.phrase == norm && (timeSec - twoAgo.startSec) <= 4.0f) {
+          pingPongs++;
+          accumulatedPenalty += 10.0f;
+        }
+      }
+    }
+
+    history.push_back({norm, timeSec});
+  }
+
+  void printHistory() const {
+    for (size_t i = 1; i < history.size(); i++) {
+      float dwell = history[i].startSec - history[i-1].startSec;
+      std::cout << "   t=" << std::fixed << std::setprecision(1) << history[i].startSec 
+                << "s (dur=" << dwell << "s): " << history[i-1].phrase << " -> " << history[i].phrase << "\n";
+    }
+  }
+
+  PhrasePenaltyMetrics getMetrics() const {
+    PhrasePenaltyMetrics m;
+    m.penaltyScore = accumulatedPenalty;
+    m.stabilityScore = fmaxf(0.0f, 100.0f - accumulatedPenalty);
+    m.totalTransitions = (history.size() > 1) ? (history.size() - 1) : 0;
+    m.microFlips = microFlips;
+    m.rapidFlips = rapidFlips;
+    m.pingPongs = pingPongs;
+    m.minDwellSec = (dwellCount > 0) ? minDwell : 0.0f;
+    m.avgDwellSec = (dwellCount > 0) ? (totalDwellSum / (float)dwellCount) : 0.0f;
+    return m;
+  }
+};
+
 struct BenchmarkScore {
   float overallScore = 0.0f;
   float presenceAccuracy = 0.0f;
   float semanticAccuracy = 0.0f;
   float phraseAlignmentScore = 0.0f;
   float stabilityScore = 0.0f;
+  float phraseStabilityScore = 0.0f;
+  float phrasePenaltyScore = 0.0f;
   size_t evaluatedSeconds = 0;
   size_t stateFlips = 0;
   size_t phraseFlips = 0;
+  size_t phraseMicroFlips = 0;
+  size_t phrasePingPongs = 0;
 };
 
 struct FixtureAssertion {
@@ -49,6 +168,15 @@ struct FixtureAssertion {
 
 class FixtureReplayer {
 public:
+  static std::string normalizeStr(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+      if (c == ' ' || c == '-') out += '_';
+      else out += (char)tolower(c);
+    }
+    return out;
+  }
+
   static bool replayAndVerify(const std::string& fixturePath, AudioClassifier& classifier) {
     std::ifstream file(fixturePath);
     if (!file.is_open()) {
@@ -140,6 +268,7 @@ public:
     size_t phraseFlips = 0;
     std::string prevState = "";
     std::string prevPhrase = "";
+    PhrasePenaltyCalculator phraseCalculator;
 
     JsonArray frames = doc["frames"].as<JsonArray>();
     if (frames.size() == 0) {
@@ -175,22 +304,15 @@ public:
 
       // Process frame through classifier
       classifier.processFrame(frame);
+      phraseCalculator.recordFrame(frameTimeSec, normalizeStr(classifier.getPhraseStateStr()));
 
       uint32_t curSec = frame.timestampMs / 1000;
       if (curSec != lastSnapSec) {
         lastSnapSec = curSec;
-        auto normStr = [](const std::string& s) -> std::string {
-          std::string out;
-          for (char c : s) {
-            if (c == ' ' || c == '-') out += '_';
-            else out += (char)tolower(c);
-          }
-          return out;
-        };
         SecondSnap snap;
         snap.presence = (classifier.getPresence() == SoundPresence::SOUND) ? "sound" : "quiet";
-        snap.state = normStr(classifier.getSemanticStateStr());
-        snap.phrase = normStr(classifier.getPhraseStateStr());
+        snap.state = normalizeStr(classifier.getSemanticStateStr());
+        snap.phrase = normalizeStr(classifier.getPhraseStateStr());
         snap.bpm = classifier.getBPM();
         snapshots[curSec] = snap;
 
@@ -441,11 +563,16 @@ public:
       size_t excessFlips = ((stateFlips + phraseFlips) > expectedFlips * 2) ? ((stateFlips + phraseFlips) - expectedFlips * 2) : 0;
       float stabilityScore = fmaxf(0.0f, 100.0f - ((float)excessFlips * 2.5f));
 
-      float overallScore = (0.35f * semAcc) + (0.25f * presAcc) + (0.25f * phrAcc) + (0.15f * stabilityScore);
+      PhrasePenaltyMetrics phraseMetrics = phraseCalculator.getMetrics();
+      float phraseStab = phraseMetrics.stabilityScore;
+      float combinedStability = (0.5f * stabilityScore) + (0.5f * phraseStab);
+
+      float overallScore = (0.35f * semAcc) + (0.25f * presAcc) + (0.25f * phrAcc) + (0.15f * combinedStability);
 
       std::cout << "\n========================================================================================\n"
                 << "📊 Native Fixture Benchmark Score: " << std::fixed << std::setprecision(1) << overallScore << "%\n"
-                << "   Presence: " << presAcc << "% | Semantic: " << semAcc << "% | Phrase: " << phrAcc << "% | Stability: " << stabilityScore << "%\n";
+                << "   Presence: " << presAcc << "% | Semantic: " << semAcc << "% | Phrase: " << phrAcc << "% | Stability: " << stabilityScore << "%\n"
+                << "   🎼 Phrase Anti-Churn: " << phraseMetrics.stabilityScore << "% (Penalty: -" << phraseMetrics.penaltyScore << ", Micro-Flips: " << phraseMetrics.microFlips << ", Ping-Pongs: " << phraseMetrics.pingPongs << ")\n";
       if (groundTruthBpm > 0.0f) {
         std::cout << "   🎵 BPM Accuracy: " << bpmAcc << "% | MAE: " << bpmMae << " BPM (Ground Truth: " << groundTruthBpm << " BPM, Evaluated: " << bpmEvalCount << "s)\n";
       }

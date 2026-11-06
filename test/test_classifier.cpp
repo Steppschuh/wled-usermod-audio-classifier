@@ -783,6 +783,257 @@ void test_non_music_state_has_zero_energy_and_unknown_phrase_and_silence_clear_c
   TEST_ASSERT_EQUAL_STRING("silence", classifier.getSoundEnergyStr());
 }
 
+void test_phrase_penalty_calculator_penalizes_rapid_phrase_churn(void) {
+  PhrasePenaltyCalculator calc;
+
+  // Case 1: Ideal macro structure progression:
+  // Verse (0 to 30s) -> Chorus (30s to 60s) -> Breakdown (60s to 90s) -> Chorus (90s to 120s) -> Outro (120s to 150s)
+  calc.recordFrame(0.0f, "verse");
+  calc.recordFrame(15.0f, "verse");
+  calc.recordFrame(30.0f, "chorus");
+  calc.recordFrame(45.0f, "chorus");
+  calc.recordFrame(60.0f, "breakdown");
+  calc.recordFrame(75.0f, "breakdown");
+  calc.recordFrame(90.0f, "chorus");
+  calc.recordFrame(105.0f, "chorus");
+  calc.recordFrame(120.0f, "outro");
+  calc.recordFrame(150.0f, "outro");
+
+  PhrasePenaltyMetrics cleanMetrics = calc.getMetrics();
+  TEST_ASSERT_EQUAL_UINT32(0, cleanMetrics.microFlips);
+  TEST_ASSERT_EQUAL_UINT32(0, cleanMetrics.rapidFlips);
+  TEST_ASSERT_EQUAL_UINT32(0, cleanMetrics.pingPongs);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, cleanMetrics.penaltyScore);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 100.0f, cleanMetrics.stabilityScore);
+  TEST_ASSERT_FLOAT_WITHIN(1.0f, 30.0f, cleanMetrics.minDwellSec);
+
+  // Case 2: Frequent rapid phrase churn (jumping every second between Chorus and Verse):
+  calc.reset();
+  calc.recordFrame(0.0f, "chorus");
+  calc.recordFrame(1.0f, "verse");    // dwell 1.0s -> micro-flip!
+  calc.recordFrame(2.0f, "chorus");   // dwell 1.0s -> micro-flip + ping-pong!
+  calc.recordFrame(3.0f, "verse");    // dwell 1.0s -> micro-flip + ping-pong!
+  calc.recordFrame(4.0f, "chorus");   // dwell 1.0s -> micro-flip + ping-pong!
+  calc.recordFrame(5.0f, "verse");    // dwell 1.0s -> micro-flip + ping-pong!
+  calc.recordFrame(6.0f, "chorus");   // dwell 1.0s -> micro-flip + ping-pong!
+
+  PhrasePenaltyMetrics churnMetrics = calc.getMetrics();
+  TEST_ASSERT_TRUE_MESSAGE(churnMetrics.microFlips >= 5, "Micro-flips must be detected for 1-second jumps");
+  TEST_ASSERT_TRUE_MESSAGE(churnMetrics.pingPongs >= 4, "Ping-pong pattern must be detected");
+  TEST_ASSERT_TRUE_MESSAGE(churnMetrics.penaltyScore >= 70.0f, "Penalty score must be heavy for rapid churn");
+  TEST_ASSERT_TRUE_MESSAGE(churnMetrics.stabilityScore <= 30.0f, "Stability score must drop heavily for rapid churn");
+}
+
+void test_edm_macro_structure_phrase_progression_and_anti_churn(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.musicHoldMs = 35000;
+  AudioClassifier classifier(cfg);
+  PhrasePenaltyCalculator phraseCalc;
+  AudioFrame frame;
+
+  // 128 BPM: 1 beat = 469ms. 1 bar = 1875ms.
+  const uint32_t beatMs = 469;
+  uint32_t lastBeatTime = 0;
+  uint32_t lastSnareTime = 0;
+
+  bool sawIntroOrVerse = false;
+  bool sawBreakdown1 = false;
+  bool sawBuildup1 = false;
+  bool sawChorus1 = false;
+  bool sawBreakdown2 = false;
+  bool sawBuildup2 = false;
+  bool sawChorus2 = false;
+  bool sawOutro = false;
+
+  // Total 210 seconds:
+  // 00:00 - 00:30 (16 bars): Intro
+  // 00:30 - 01:00 (16 bars): Breakdown 1
+  // 01:00 - 01:15 ( 8 bars): Build-up 1
+  // 01:15 - 01:45 (16 bars): Drop 1 / Chorus
+  // 01:45 - 02:15 (16 bars): Breakdown 2 / Bridge
+  // 02:15 - 02:30 ( 8 bars): Build-up 2
+  // 02:30 - 03:00 (16 bars): Drop 2 / Climax Chorus
+  // 03:00 - 03:30 (16 bars): Outro
+
+  for (uint32_t t = 0; t <= 210000; t += 20) {
+    frame.timestampMs = t;
+    float timeSec = (float)t / 1000.0f;
+
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 5;
+    frame.isPeak = false;
+
+    // 1. Intro (0 - 30s): Stripped-back steady 128 BPM groove, moderate 30% volume
+    if (t < 30000) {
+      frame.levelPercent = 30.0f;
+      frame.rawVolume = 75.0f;
+      frame.smoothedVolume = 75.0f;
+      frame.majorPeakHz = 80.0f;
+      for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 15;
+      frame.bands[8] = 30; // light mids
+
+      if (t - lastBeatTime >= beatMs) {
+        lastBeatTime = t;
+        frame.isPeak = true;
+        frame.bands[0] = 130; // 128 BPM steady kick
+        frame.bands[1] = 100;
+        frame.bands[2] = 60;
+      }
+    }
+    // 2. Breakdown 1 (30s - 60s): Drums drop out, atmospheric pad, low level (14%)
+    else if (t < 60000) {
+      frame.levelPercent = 14.0f;
+      frame.rawVolume = 35.0f;
+      frame.smoothedVolume = 35.0f;
+      frame.isPeak = false; // Drums cut out!
+      frame.majorPeakHz = 440.0f;
+      frame.bands[0] = 5;   // bass silent
+      frame.bands[1] = 5;
+      frame.bands[7] = 20;  // warm synth pad
+      frame.bands[8] = 25;
+    }
+    // 3. Build-up 1 (60s - 75s): Accelerating snare rolls, rising volume (15% -> 45%), rising pitch sweep
+    else if (t < 75000) {
+      float p = (float)(t - 60000) / 15000.0f; // 0.0 -> 1.0
+      frame.levelPercent = 15.0f + (30.0f * p);
+      frame.rawVolume = 38.0f + (80.0f * p);
+      frame.smoothedVolume = frame.rawVolume;
+      frame.majorPeakHz = 300.0f + (900.0f * p);
+      frame.bands[0] = (uint8_t)(10.0f + 25.0f * p);
+      frame.bands[1] = (uint8_t)(10.0f + 25.0f * p);
+      frame.bands[10] = (uint8_t)(25.0f + 35.0f * p); // rising snare
+
+      uint32_t snareRate = (p < 0.5f) ? beatMs : ((p < 0.8f) ? (beatMs / 2) : (beatMs / 4));
+      if (t - lastSnareTime >= snareRate) {
+        lastSnareTime = t;
+        frame.isPeak = true;
+        frame.bands[11] = 70;
+      }
+    }
+    // 4. Drop 1 / Chorus (75s - 105s): Massive bass drop, driving 128 BPM kicks, peak 55% volume
+    else if (t < 105000) {
+      frame.levelPercent = 55.0f;
+      frame.rawVolume = 140.0f;
+      frame.smoothedVolume = 140.0f;
+      frame.majorPeakHz = 60.0f;
+      frame.bands[8] = 40;
+      frame.bands[12] = 35; // hi-hats
+
+      if (t - lastBeatTime >= beatMs) {
+        lastBeatTime = t;
+        frame.isPeak = true;
+        frame.bands[0] = 150; // Heavy four-on-the-floor kick
+        frame.bands[1] = 130;
+        frame.bands[2] = 80;
+      } else {
+        frame.bands[0] = 30; // heavy sub-bass drone
+        frame.bands[1] = 30;
+      }
+    }
+    // 5. Breakdown 2 / Bridge (105s - 135s): Kick cuts out abruptly, atmospheric breather, 12% volume
+    else if (t < 135000) {
+      frame.levelPercent = 12.0f;
+      frame.rawVolume = 30.0f;
+      frame.smoothedVolume = 30.0f;
+      frame.isPeak = false;
+      frame.majorPeakHz = 520.0f;
+      frame.bands[0] = 4;
+      frame.bands[1] = 4;
+      frame.bands[8] = 22;
+    }
+    // 6. Build-up 2 (135s - 150s): Second build-up riser with accelerating snare rolls
+    else if (t < 150000) {
+      float p = (float)(t - 135000) / 15000.0f;
+      frame.levelPercent = 15.0f + (30.0f * p);
+      frame.rawVolume = 38.0f + (80.0f * p);
+      frame.smoothedVolume = frame.rawVolume;
+      frame.majorPeakHz = 350.0f + (1000.0f * p);
+      frame.bands[0] = (uint8_t)(10.0f + 25.0f * p);
+      frame.bands[1] = (uint8_t)(10.0f + 25.0f * p);
+      frame.bands[10] = (uint8_t)(25.0f + 35.0f * p);
+
+      uint32_t snareRate = (p < 0.5f) ? beatMs : ((p < 0.8f) ? (beatMs / 2) : (beatMs / 4));
+      if (t - lastSnareTime >= snareRate) {
+        lastSnareTime = t;
+        frame.isPeak = true;
+        frame.bands[11] = 80;
+      }
+    }
+    // 7. Drop 2 / Climax Chorus (150s - 180s): Climax drop, highest energy
+    else if (t < 180000) {
+      frame.levelPercent = 60.0f;
+      frame.rawVolume = 155.0f;
+      frame.smoothedVolume = 155.0f;
+      frame.majorPeakHz = 55.0f;
+      frame.bands[8] = 45;
+      frame.bands[12] = 40;
+
+      if (t - lastBeatTime >= beatMs) {
+        lastBeatTime = t;
+        frame.isPeak = true;
+        frame.bands[0] = 160;
+        frame.bands[1] = 140;
+        frame.bands[2] = 90;
+      } else {
+        frame.bands[0] = 35;
+        frame.bands[1] = 35;
+      }
+    }
+    // 8. Outro (180s - 210s): Stripped-back mix-out decaying to silence
+    else {
+      float p = (float)(t - 180000) / 30000.0f; // 0.0 -> 1.0
+      frame.levelPercent = fmaxf(1.0f, 15.0f * (1.0f - p));
+      frame.rawVolume = frame.levelPercent * 2.55f;
+      frame.smoothedVolume = frame.rawVolume;
+      frame.majorPeakHz = 200.0f;
+      frame.bands[0] = (uint8_t)(10.0f * (1.0f - p));
+      frame.bands[8] = (uint8_t)(15.0f * (1.0f - p));
+    }
+
+    classifier.processFrame(frame);
+
+    MusicPhrase phr = classifier.getPhraseState();
+    if (t >= 5000 && t < 30000 && (phr == MusicPhrase::INTRO || phr == MusicPhrase::VERSE)) sawIntroOrVerse = true;
+    if (t >= 35000 && t < 60000 && phr == MusicPhrase::BREAKDOWN) sawBreakdown1 = true;
+    if (t >= 62000 && t < 75000 && phr == MusicPhrase::BUILDUP) sawBuildup1 = true;
+    if (t >= 80000 && t < 105000 && phr == MusicPhrase::CHORUS) sawChorus1 = true;
+    if (t >= 110000 && t < 135000 && phr == MusicPhrase::BREAKDOWN) sawBreakdown2 = true;
+    if (t >= 137000 && t < 150000 && phr == MusicPhrase::BUILDUP) sawBuildup2 = true;
+    if (t >= 155000 && t < 180000 && phr == MusicPhrase::CHORUS) sawChorus2 = true;
+    if (t >= 195000 && t <= 210000 && phr == MusicPhrase::OUTRO) sawOutro = true;
+
+    // Record into phrase penalty calculator
+    phraseCalc.recordFrame(timeSec, classifier.getPhraseStateStr());
+  }
+
+  // 1. Verify that all 8 macro structure sections were reached
+  TEST_ASSERT_TRUE_MESSAGE(sawIntroOrVerse, "EDM Intro must be detected as Intro or Verse");
+  TEST_ASSERT_TRUE_MESSAGE(sawBreakdown1, "Breakdown 1 must be detected as Breakdown");
+  TEST_ASSERT_TRUE_MESSAGE(sawBuildup1, "Build-up 1 must be detected as Buildup");
+  TEST_ASSERT_TRUE_MESSAGE(sawChorus1, "Drop 1 must be detected as Chorus");
+  TEST_ASSERT_TRUE_MESSAGE(sawBreakdown2, "Breakdown 2 / Bridge must be detected as Breakdown");
+  TEST_ASSERT_TRUE_MESSAGE(sawBuildup2, "Build-up 2 must be detected as Buildup");
+  TEST_ASSERT_TRUE_MESSAGE(sawChorus2, "Drop 2 must be detected as Chorus");
+  TEST_ASSERT_TRUE_MESSAGE(sawOutro, "Outro must be detected as Outro");
+
+  // 2. Verify phrase stability and absence of rapid churn
+  PhrasePenaltyMetrics m = phraseCalc.getMetrics();
+  std::cout << "\n========================================================================================\n"
+            << "🎧 EDM Macro Structure Phrase Stability Report:\n"
+            << "   Total transitions: " << m.totalTransitions << " across 210s track\n"
+            << "   Micro-Flips (< 2s): " << m.microFlips << "\n"
+            << "   Rapid-Flips (< 5s): " << m.rapidFlips << "\n"
+            << "   Ping-Pongs (A->B->A in <= 4s): " << m.pingPongs << "\n"
+            << "   Shortest phrase dwell: " << m.minDwellSec << "s | Avg dwell: " << m.avgDwellSec << "s\n"
+            << "   Phrase Anti-Churn Score: " << m.stabilityScore << "% (Penalty: -" << m.penaltyScore << ")\n";
+  phraseCalc.printHistory();
+  std::cout << "========================================================================================\n";
+
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, m.microFlips, "No micro-flips (< 2s) allowed in EDM macro structure!");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, m.pingPongs, "No ping-pong oscillations allowed in EDM macro structure!");
+  TEST_ASSERT_TRUE_MESSAGE(m.stabilityScore >= 85.0f, "EDM Macro phrase stability score must be >= 85%!");
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_initial_state_is_quiet_and_silence);
@@ -807,5 +1058,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_outlier_missing_beat_in_phrase_reverts);
   RUN_TEST(test_moderate_volume_with_band1_kick_and_vocal_mids_detected);
   RUN_TEST(test_isolated_single_bass_hit_does_not_yield_high_beat_probability);
+  RUN_TEST(test_phrase_penalty_calculator_penalizes_rapid_phrase_churn);
+  RUN_TEST(test_edm_macro_structure_phrase_progression_and_anti_churn);
   return UNITY_END();
 }
