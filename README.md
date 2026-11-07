@@ -1,3 +1,5 @@
+![Cover Image](media/cover.png)
+
 # WLED Audio Classifier Usermod
 
 [![Build Firmware](https://github.com/Steppschuh/wled-usermod-audio-classifier/actions/workflows/build-firmware.yml/badge.svg)](https://github.com/Steppschuh/wled-usermod-audio-classifier/actions/workflows/build-firmware.yml)
