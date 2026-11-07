@@ -30,14 +30,14 @@ enum class MusicPhrase : uint8_t {
 };
 
 enum class SoundEnergy : uint8_t {
-  SILENCE = 0,
-  NOISE = 10,
-  OUTRO = 30,
-  BREAKDOWN = 40,
-  BUILDUP = 50,
-  INTRO = 60,
-  VERSE = 80,
-  CHORUS = 100
+  SILENCE   = 0,
+  NOISE     = 10,
+  BREAKDOWN = 20,
+  OUTRO     = 35,
+  INTRO     = 50,
+  VERSE     = 70,
+  BUILDUP   = 85,
+  CHORUS    = 100
 };
 
 template<size_t N>
@@ -146,10 +146,7 @@ public:
   }
   float getBeatProbability() const { return beatProbability; }
   float getBeatProbabilityPercent() const { return beatProbability * 100.0f; }
-  uint8_t getSoundEnergy() const {
-    if (semanticState != AudioSemanticState::MUSIC) return 0;
-    return (uint8_t)soundEnergy;
-  }
+  uint8_t getSoundEnergy() const;
   const char* getSoundEnergyStr() const;
   SoundEnergy getSoundEnergyState() const {
     if (semanticState != AudioSemanticState::MUSIC) return SoundEnergy::SILENCE;

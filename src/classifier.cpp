@@ -119,6 +119,60 @@ const char* AudioClassifier::getPhraseStateStr() const {
   }
 }
 
+uint8_t AudioClassifier::getSoundEnergy() const {
+  if (semanticState != AudioSemanticState::MUSIC) {
+    return 0;
+  }
+
+  // Normalized acoustic headroom above noise floor (0.0 to 1.0)
+  float headroom = (average1sLevel - (noiseFloor + 2.0f)) / 25.0f;
+  if (headroom < 0.0f) headroom = 0.0f;
+  if (headroom > 1.0f) headroom = 1.0f;
+
+  float energy = 0.0f;
+  switch (phraseState) {
+    case MusicPhrase::BREAKDOWN:
+      energy = 15.0f + (headroom * 10.0f); // 15% - 25% (center: 20%)
+      break;
+    case MusicPhrase::OUTRO:
+      energy = 30.0f + (headroom * 10.0f); // 30% - 40% (center: 35%)
+      break;
+    case MusicPhrase::INTRO:
+      energy = 45.0f + (headroom * 10.0f); // 45% - 55% (center: 50%)
+      break;
+    case MusicPhrase::VERSE:
+      energy = 65.0f + (headroom * 13.0f); // 65% - 78% (center: 71%)
+      break;
+    case MusicPhrase::BUILDUP: {
+      uint32_t dt = (lastPhraseChangeMs > 0 && lastFrameTimeMs >= lastPhraseChangeMs)
+                    ? (lastFrameTimeMs - lastPhraseChangeMs) : 0;
+      uint32_t targetDur = (durationBetweenPhrases > 0) ? durationBetweenPhrases : 16000;
+      float progress = (float)dt / (float)targetDur;
+      if (progress < 0.0f) progress = 0.0f;
+      if (progress > 1.0f) progress = 1.0f;
+
+      float buildupFactor = (progress * 0.65f) + (headroom * 0.35f);
+      if (buildupFactor > 1.0f) buildupFactor = 1.0f;
+      energy = 80.0f + (buildupFactor * 15.0f); // 80% - 95%
+      break;
+    }
+    case MusicPhrase::CHORUS:
+      if (peak1sLevel >= 40.0f || headroom >= 0.70f) {
+        energy = 100.0f;
+      } else {
+        energy = 95.0f + (headroom * 5.0f); // 95% - 100%
+      }
+      break;
+    default:
+      energy = 0.0f;
+      break;
+  }
+
+  if (energy < 0.0f) energy = 0.0f;
+  if (energy > 100.0f) energy = 100.0f;
+  return (uint8_t)roundf(energy);
+}
+
 const char* AudioClassifier::getSoundEnergyStr() const {
   if (semanticState != AudioSemanticState::MUSIC) {
     return "silence";
@@ -126,11 +180,11 @@ const char* AudioClassifier::getSoundEnergyStr() const {
   switch (soundEnergy) {
     case SoundEnergy::SILENCE:   return "silence";
     case SoundEnergy::NOISE:     return "noise";
-    case SoundEnergy::OUTRO:     return "outro";
     case SoundEnergy::BREAKDOWN: return "breakdown";
-    case SoundEnergy::BUILDUP:   return "buildup";
+    case SoundEnergy::OUTRO:     return "outro";
     case SoundEnergy::INTRO:     return "intro";
     case SoundEnergy::VERSE:     return "verse";
+    case SoundEnergy::BUILDUP:   return "buildup";
     case SoundEnergy::CHORUS:    return "chorus";
     default:                     return "silence";
   }
@@ -630,9 +684,9 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     dropThresh *= (1.0f - 0.25f * phraseFactor);
   }
 
-  if (soundEnergy == SoundEnergy::CHORUS) {
+  if (phraseState == MusicPhrase::CHORUS) {
     dropThresh *= 2.0f;
-  } else if (soundEnergy < SoundEnergy::VERSE) {
+  } else if (phraseState == MusicPhrase::BUILDUP || phraseState == MusicPhrase::INTRO || phraseState == MusicPhrase::BREAKDOWN || phraseState == MusicPhrase::OUTRO || phraseState == MusicPhrase::UNKNOWN) {
     dropThresh *= 0.75f;
   }
 
@@ -759,7 +813,8 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
         isTentativeTransition = false;
       } else {
         // Case 1: Premature Upward Bump (e.g. switched to CHORUS or VERSE on 1 isolated hit)
-        if (soundEnergy >= SoundEnergy::VERSE && tentativePrevEnergy < SoundEnergy::VERSE) {
+        if ((phraseState == MusicPhrase::CHORUS || phraseState == MusicPhrase::VERSE) &&
+            (tentativePrevPhrase != MusicPhrase::CHORUS && tentativePrevPhrase != MusicPhrase::VERSE)) {
           if (tentativeBeatsSeen >= 2 || (peak1sLevel >= 48.0f && bassBuffer.mean >= 20.0f)) {
             // Sustained consecutive beats or strong drop energy confirmed the transition!
             isTentativeTransition = false;
@@ -783,7 +838,8 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
           }
         }
         // Case 2: Premature Downward Drop (e.g. dropped from CHORUS or VERSE due to 1-2 missing beats in bar 8)
-        else if (soundEnergy < SoundEnergy::VERSE && tentativePrevEnergy >= SoundEnergy::VERSE) {
+        else if ((phraseState != MusicPhrase::CHORUS && phraseState != MusicPhrase::VERSE) &&
+                 (tentativePrevPhrase == MusicPhrase::CHORUS || tentativePrevPhrase == MusicPhrase::VERSE)) {
           // If a beat with bass resumes within the tentative window, it was just 1-2 missing beats in bar 8!
           bool bassResumed = (hasBass || bassRatio >= 0.25f || peak1sLevel >= 40.0f);
           if (beatDetected && bassResumed) {
@@ -888,23 +944,26 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
         SoundEnergy prevEnergy = soundEnergy;
         if (soundEnergy == SoundEnergy::OUTRO) {
           if (updatedEnergy == SoundEnergy::CHORUS || peak1sLevel >= 48.0f) soundEnergy = SoundEnergy::CHORUS;
-          else if (updatedEnergy >= SoundEnergy::VERSE) soundEnergy = SoundEnergy::VERSE;
+          else if (updatedEnergy == SoundEnergy::BUILDUP) soundEnergy = SoundEnergy::BUILDUP;
+          else if (updatedEnergy == SoundEnergy::VERSE) soundEnergy = SoundEnergy::VERSE;
           else soundEnergy = updatedEnergy;
         } else if (soundEnergy == SoundEnergy::INTRO) {
           if (updatedEnergy == SoundEnergy::CHORUS || peak1sLevel >= 48.0f) soundEnergy = SoundEnergy::CHORUS;
-          else if (updatedEnergy >= SoundEnergy::VERSE) soundEnergy = SoundEnergy::VERSE;
+          else if (updatedEnergy == SoundEnergy::BUILDUP) soundEnergy = SoundEnergy::BUILDUP;
+          else if (updatedEnergy == SoundEnergy::VERSE) soundEnergy = SoundEnergy::VERSE;
           else soundEnergy = updatedEnergy;
         } else if (soundEnergy == SoundEnergy::BREAKDOWN) {
           if (updatedEnergy == SoundEnergy::CHORUS || peak1sLevel >= 48.0f) soundEnergy = SoundEnergy::CHORUS;
-          else if (updatedEnergy >= SoundEnergy::VERSE) soundEnergy = SoundEnergy::VERSE;
+          else if (updatedEnergy == SoundEnergy::BUILDUP) soundEnergy = SoundEnergy::BUILDUP;
+          else if (updatedEnergy == SoundEnergy::VERSE) soundEnergy = SoundEnergy::VERSE;
           else soundEnergy = updatedEnergy;
         } else if (soundEnergy == SoundEnergy::VERSE) {
           if (updatedEnergy == SoundEnergy::CHORUS || peak1sLevel >= 48.0f) soundEnergy = SoundEnergy::CHORUS;
-          else if (bassTrend > 1.25f) soundEnergy = SoundEnergy::BUILDUP;
+          else if (updatedEnergy == SoundEnergy::BUILDUP || bassTrend > 1.25f) soundEnergy = SoundEnergy::BUILDUP;
         } else if (soundEnergy == SoundEnergy::BUILDUP) {
           if (updatedEnergy == SoundEnergy::CHORUS || (dropInLastPhrase && (peak1sLevel >= 38.0f || average1sLevel >= 28.0f)) || peak1sLevel >= 48.0f) {
             soundEnergy = SoundEnergy::CHORUS;
-          } else if (updatedEnergy >= SoundEnergy::VERSE) {
+          } else if (updatedEnergy == SoundEnergy::VERSE) {
             soundEnergy = SoundEnergy::VERSE;
           }
         } else {
@@ -925,6 +984,14 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
           } else {
             if (updatedEnergy == SoundEnergy::VERSE && beatInLastBar && hasActiveBeatGroove) soundEnergy = SoundEnergy::VERSE;
             else soundEnergy = SoundEnergy::BREAKDOWN;
+            lastEnergyUpdateTime = now;
+          }
+        } else if (soundEnergy == SoundEnergy::BUILDUP) {
+          if (barsSinceEnergyUpdate >= 16 || currentLevel < noiseFloor + 3.0f || isVolumeCollapsed) {
+            soundEnergy = SoundEnergy::BREAKDOWN;
+            lastEnergyUpdateTime = now;
+          } else if (updatedEnergy == SoundEnergy::VERSE && hasActiveBeatGroove) {
+            soundEnergy = SoundEnergy::VERSE;
             lastEnergyUpdateTime = now;
           }
         } else if (soundEnergy == SoundEnergy::VERSE) {

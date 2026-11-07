@@ -78,6 +78,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     doc["unit_of_meas"] = "%";
     doc["stat_cla"] = "measurement";
     doc["icon"] = "mdi:volume-medium";
+    doc["entity_category"] = "diagnostic";
     doc["uniq_id"] = chipId + "_audio_level_rms";
     doc["avty_t"] = statusTopic;
     doc["pl_avail"] = "online";
@@ -105,6 +106,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     doc["unit_of_meas"] = "%";
     doc["stat_cla"] = "measurement";
     doc["icon"] = "mdi:volume-high";
+    doc["entity_category"] = "diagnostic";
     doc["uniq_id"] = chipId + "_audio_level_peak";
     doc["avty_t"] = statusTopic;
     doc["pl_avail"] = "online";

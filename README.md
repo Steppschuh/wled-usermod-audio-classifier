@@ -49,16 +49,6 @@ Contextual sensor that classifies the room into one of three states:
 
 ---
 
-### Audio Level RMS
-Continuous 1-second rolling RMS sound level from `0.0%` to `100.0%`. Updates every second for dashboard gauges and automation conditions.
-
----
-
-### Audio Level Peak
-Peak volume recorded over the last 1-second window (`0.0%` to `100.0%`). Tracks instantaneous transients, percussion hits, and loud impacts.
-
----
-
 ### Music Phrase
 Song structure classification based on tension-and-release electronic music arrangement:
 - `Intro`: Initial beat or melodic introduction.
@@ -72,15 +62,19 @@ Song structure classification based on tension-and-release electronic music arra
 ---
 
 ### Music Energy
-Quantized energy metric mapped to current song section:
+Dynamic energy metric (`0%` to `100%`) mapped to distinct, non-overlapping windows that breathe with live volume and song tension:
 - `0%`: Silence or non-musical audio.
-- `10%`: Ambient background sound.
-- `30%`: Outro.
-- `40%`: Breakdown.
-- `50%`: Buildup.
-- `60%`: Intro.
-- `80%`: Verse.
-- `100%`: Chorus / drop.
+- `15% – 25%`: Breakdown (quiet breather, modulated by ambient pad and vocal presence).
+- `30% – 40%`: Outro (mix-out section modulated by remaining percussion level).
+- `45% – 55%`: Intro (incoming beat and initial melodic theme).
+- `65% – 78%`: Verse (main steady groove modulated by vocal and bass punch).
+- `80% – 95%`: Buildup (crescendo ramp escalating with riser volume and elapsed phrase duration).
+- `95% – 100%`: Chorus / drop (high-impact climax hitting 100% on bass drops).
+
+---
+
+### Music Beat Probability
+Confidence score from `0.0%` to `100.0%` indicating rhythm regularity based on low-frequency variance analysis (0% represents non-rhythmic noise or silence; 100% indicates a steady bass beat).
 
 ---
 
@@ -89,8 +83,13 @@ Detected musical tempo from `60` to `240 bpm` (`0` when music is not active). Re
 
 ---
 
-### Music Beat Probability
-Confidence score from `0.0%` to `100.0%` indicating rhythm regularity based on low-frequency variance analysis (0% represents non-rhythmic noise or silence; 100% indicates a steady bass beat).
+### Audio Level RMS
+Diagnostic sensor reporting the continuous 1-second rolling RMS sound level from `0.0%` to `100.0%`. Updates every second for dashboard gauges and automation conditions.
+
+---
+
+### Audio Level Peak
+Diagnostic sensor reporting the peak volume recorded over the last 1-second window (`0.0%` to `100.0%`). Tracks instantaneous transients, percussion hits, and loud impacts.
 
 ---
 
