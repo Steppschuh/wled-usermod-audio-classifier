@@ -41,15 +41,11 @@ When MQTT is enabled, these entities are added to your WLED device in Home Assis
 ### Audio Detected
 Binary sensor (`sound` device class) that turns `on` during sustained sound and `off` when the room is quiet. Default delays require 1.2 s of continuous sound to trigger and 8.0 s of silence to clear, filtering out short noises like door slams.
 
----
-
 ### Audio Type
 Contextual sensor that classifies the room into one of three states:
 - `Silence`: Sound level is at or below the ambient room baseline.
 - `Ambient Noise`: Sustained non-musical sound such as conversation, TV dialogue, fans, or kitchen activity.
 - `Music`: Rhythmic and harmonic sound with structural musical properties.
-
----
 
 ### Music Phrase
 Song structure classification based on tension-and-release electronic music arrangement:
@@ -61,8 +57,6 @@ Song structure classification based on tension-and-release electronic music arra
 - `Outro`: Ending section of a track.
 - `Unknown`: Default state during silence, ambient noise, or before enough frames are collected.
 
----
-
 ### Music Energy
 Dynamic energy metric (`0%` to `100%`) mapped to distinct, non-overlapping windows that breathe with live volume and song tension:
 - `0%`: Silence or non-musical audio.
@@ -73,35 +67,20 @@ Dynamic energy metric (`0%` to `100%`) mapped to distinct, non-overlapping windo
 - `80% – 95%`: Buildup (crescendo ramp escalating with riser volume and elapsed phrase duration).
 - `95% – 100%`: Chorus / drop (high-impact climax hitting 100% on bass drops).
 
----
-
 ### Music Beat Probability
 Confidence score from `0.0%` to `100.0%` indicating rhythm regularity based on low-frequency variance analysis (0% represents non-rhythmic noise or silence; 100% indicates a steady bass beat).
-
----
 
 ### BPM
 Detected musical tempo from `60` to `240 bpm` (`0` when music is not active). Rejects octave doubling and syncopated eighth notes, and holds steady through quiet breakdowns.
 
----
-
 ### Audio Level RMS
 Diagnostic sensor reporting the continuous 1-second rolling RMS sound level from `0.0%` to `100.0%`. Updates every second for dashboard gauges and automation conditions.
-
----
 
 ### Audio Level Peak
 Diagnostic sensor reporting the peak volume recorded over the last 1-second window (`0.0%` to `100.0%`). Tracks instantaneous transients, percussion hits, and loud impacts.
 
----
-
 ### Audio Source Status
 Diagnostic sensor reporting coupling health with WLED's AudioReactive engine (`OK`, `AudioReactive mod disabled`, or `AudioReactive mod missing`).
-
----
-
-### Audio Classifier
-Switch entity (`switch.<device>_audio_classifier`) allowing Home Assistant automations and dashboards to enable or disable the classifier mod on demand.
 
 ---
 
