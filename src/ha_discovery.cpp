@@ -71,7 +71,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
-    StaticJsonDocument<640> doc;
+    DynamicJsonDocument doc(1024);
 #endif
     doc["name"] = "Audio Level RMS";
     doc["stat_t"] = baseTopic + "level";
@@ -99,7 +99,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
-    StaticJsonDocument<640> doc;
+    DynamicJsonDocument doc(1024);
 #endif
     doc["name"] = "Audio Level Peak";
     doc["stat_t"] = baseTopic + "peak";
@@ -127,7 +127,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
-    StaticJsonDocument<640> doc;
+    DynamicJsonDocument doc(1024);
 #endif
     doc["name"] = "Audio Detected";
     doc["stat_t"] = baseTopic + "detected";
@@ -154,7 +154,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
-    StaticJsonDocument<640> doc;
+    DynamicJsonDocument doc(1024);
 #endif
     doc["name"] = "Audio Type";
     doc["stat_t"] = baseTopic + "type";
@@ -183,7 +183,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
-    StaticJsonDocument<640> doc;
+    DynamicJsonDocument doc(1024);
 #endif
     doc["name"] = "Audio Source Status";
     doc["stat_t"] = baseTopic + "status";
@@ -213,7 +213,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
-    StaticJsonDocument<640> doc;
+    DynamicJsonDocument doc(1024);
 #endif
     doc["name"] = "Music Phrase";
     doc["stat_t"] = baseTopic + "phrase";
@@ -246,7 +246,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
-    StaticJsonDocument<640> doc;
+    DynamicJsonDocument doc(1024);
 #endif
     doc["name"] = "Music Energy";
     doc["stat_t"] = baseTopic + "energy";
@@ -273,7 +273,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
-    StaticJsonDocument<640> doc;
+    DynamicJsonDocument doc(1024);
 #endif
     doc["name"] = "BPM";
     doc["stat_t"] = baseTopic + "bpm";
@@ -300,7 +300,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
-    StaticJsonDocument<640> doc;
+    DynamicJsonDocument doc(1024);
 #endif
     doc["name"] = "Music Beat Probability";
     doc["stat_t"] = baseTopic + "beat_probability";
@@ -327,7 +327,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
-    StaticJsonDocument<640> doc;
+    DynamicJsonDocument doc(1024);
 #endif
     doc["name"] = "Audio Classifier";
     doc["stat_t"] = baseTopic + "enabled";
