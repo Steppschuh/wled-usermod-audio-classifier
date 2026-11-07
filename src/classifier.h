@@ -247,6 +247,8 @@ private:
   float prevBassEnergy = 0.0f;
   float shortBassEnergy = 0.0f;
   float longBassEnergy = 0.0f;
+  float phraseLevel = 0.0f;
+  uint32_t lowVolumeStartMs = 0;
 
   // Outlier Detection & Revert Tracking
   SoundEnergy tentativePrevEnergy = SoundEnergy::SILENCE;

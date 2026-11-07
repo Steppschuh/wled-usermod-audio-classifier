@@ -81,6 +81,8 @@ void AudioClassifier::reset() {
   prevBassEnergy = 0.0f;
   shortBassEnergy = 0.0f;
   longBassEnergy = 0.0f;
+  phraseLevel = 0.0f;
+  lowVolumeStartMs = 0;
 
   tentativePrevEnergy = SoundEnergy::SILENCE;
   tentativePrevPhrase = MusicPhrase::UNKNOWN;
@@ -773,281 +775,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     }
   }
 
-  // 9. Phrasing & SoundEnergy State Machine (Rave-Totem Algorithm)
-  if (semanticState == AudioSemanticState::MUSIC) {
-    if (soundEnergy == SoundEnergy::SILENCE) {
-      soundEnergy = SoundEnergy::INTRO;
-      phraseState = MusicPhrase::INTRO;
-      shortBassEnergy = bassEnergy;
-      longBassEnergy = bassEnergy;
-      lastEnergyUpdateTime = now;
-      lastPhraseChangeMs = now;
-    }
-
-    SoundEnergy energyBeforeUpdate = soundEnergy;
-    MusicPhrase phraseBeforeUpdate = phraseState;
-
-    shortBassEnergy = (shortBassEnergy * 0.92f) + (bassEnergy * 0.08f);
-    longBassEnergy = (longBassEnergy * 0.99f) + (bassEnergy * 0.01f);
-    float bassTrend = (longBassEnergy > 2.0f) ? (shortBassEnergy / longBassEnergy) : 1.0f;
-
-    uint32_t phraseDur = (durationBetweenPhrases > 0) ? durationBetweenPhrases : 16000;
-    uint32_t barDur = (durationBetweenBars > 0) ? durationBetweenBars : 2000;
-    uint32_t beatDur = (durationBetweenBeats > 0) ? durationBetweenBeats : 500;
-    uint32_t outlierWindowMs = (barDur > 0) ? (barDur + beatDur) : 2500;
-    if (outlierWindowMs < 1500) outlierWindowMs = 1500;
-    if (outlierWindowMs > 3500) outlierWindowMs = 3500;
-
-    // Outlier Detection & Revert Evaluation:
-    // If we just recently transitioned into a new phrase within 1-2 beats / ~1 bar,
-    // evaluate whether the switch was caused by a momentary outlier (e.g. 1 soft bass hit
-    // before the actual drop, or 1-2 beats missing in bar 8 for tension).
-    if (isTentativeTransition) {
-      uint32_t dtTentative = (now >= tentativeTransitionMs) ? (now - tentativeTransitionMs) : 0;
-      if (beatDetected) {
-        tentativeBeatsSeen++;
-      }
-
-      if (dtTentative > outlierWindowMs) {
-        // Tentative observation window elapsed without being an outlier -> confirmed!
-        isTentativeTransition = false;
-      } else {
-        // Case 1: Premature Upward Bump (e.g. switched to CHORUS or VERSE on 1 isolated hit)
-        if ((phraseState == MusicPhrase::CHORUS || phraseState == MusicPhrase::VERSE) &&
-            (tentativePrevPhrase != MusicPhrase::CHORUS && tentativePrevPhrase != MusicPhrase::VERSE)) {
-          if (tentativeBeatsSeen >= 2 || (peak1sLevel >= 48.0f && bassBuffer.mean >= 20.0f)) {
-            // Sustained consecutive beats or strong drop energy confirmed the transition!
-            isTentativeTransition = false;
-          } else {
-            // Check if no follow-up beat arrived after 2 beats, and sustained energy collapsed back
-            uint32_t gapSinceBeat = (lastBeatTimestamp > 0) ? (now - lastBeatTimestamp) : dtTentative;
-            bool noFollowupBeat = (gapSinceBeat >= (uint32_t)(beatDur * 2.2f));
-            bool energyDropped = (peak1sLevel < 42.0f && bassBuffer.mean < 15.0f);
-
-            if (noFollowupBeat && energyDropped) {
-              // Revert to previous phrase (e.g. BUILDUP) without applying the 8-bar chorus constraint!
-              soundEnergy = tentativePrevEnergy;
-              phraseState = tentativePrevPhrase;
-              lastPhraseChangeMs = tentativePrevPhraseStartMs;
-              lastExpectedPhraseStart = tentativePrevPhraseStartMs;
-              lastEnergyUpdateTime = now;
-              isTentativeTransition = false;
-              energyBeforeUpdate = soundEnergy;
-              phraseBeforeUpdate = phraseState;
-            }
-          }
-        }
-        // Case 2: Premature Downward Drop (e.g. dropped from CHORUS or VERSE due to 1-2 missing beats in bar 8)
-        else if ((phraseState != MusicPhrase::CHORUS && phraseState != MusicPhrase::VERSE) &&
-                 (tentativePrevPhrase == MusicPhrase::CHORUS || tentativePrevPhrase == MusicPhrase::VERSE)) {
-          // If a beat with bass resumes within the tentative window, it was just 1-2 missing beats in bar 8!
-          bool bassResumed = (hasBass || bassRatio >= 0.25f || peak1sLevel >= 40.0f);
-          if (beatDetected && bassResumed) {
-            // Revert back to previous phrase (e.g. CHORUS or VERSE) and preserve phrase continuity!
-            soundEnergy = tentativePrevEnergy;
-            phraseState = tentativePrevPhrase;
-            lastPhraseChangeMs = tentativePrevPhraseStartMs;
-            lastExpectedPhraseStart = tentativePrevPhraseStartMs;
-            lastEnergyUpdateTime = now;
-            isTentativeTransition = false;
-            energyBeforeUpdate = soundEnergy;
-            phraseBeforeUpdate = phraseState;
-          }
-        }
-      }
-    }
-
-    uint32_t timeSincePhraseChange = (lastPhraseChangeMs > 0 && now >= lastPhraseChangeMs)
-                                     ? (now - lastPhraseChangeMs)
-                                     : phraseDur;
-    uint32_t phraseOffset = (durationBetweenPhrases > 0) ? (timeSincePhraseChange % durationBetweenPhrases) : 0;
-    uint32_t distToBoundary = (phraseOffset < phraseDur / 2)
-                              ? phraseOffset
-                              : (phraseDur - phraseOffset);
-    bool nearPhraseBoundary = (durationBetweenBars > 0) && (distToBoundary <= durationBetweenBars);
-
-    bool dropInLastPhrase = (lastDropTimestamp > 0) && (now - lastDropTimestamp <= phraseDur);
-    bool beatInLastPhrase = (lastBeatTimestamp > 0) && (now - lastBeatTimestamp <= phraseDur);
-    bool beatInLastBar = (lastBeatTimestamp > 0) && (now - lastBeatTimestamp <= barDur);
-    bool constantBeats = (beatsPerMinute > 0) && (now - lastBpmUpdateTime <= 2 * barDur);
-    uint32_t barsWithoutBeats = (durationBetweenBars > 0) ? (durationSinceLastBeat / durationBetweenBars) : (durationSinceLastBeat / 2000);
-    uint32_t barsSinceEnergyUpdate = (barDur > 0) ? ((now - lastEnergyUpdateTime) / barDur) : 0;
-
-    bool isVolumeCollapsed = (currentLevel < (noiseFloor + 4.0f) && average1sLevel < (noiseFloor + 6.0f)) ||
-                             (peak1sLevel < 12.0f && average1sLevel < 8.0f);
-    bool noBeatsRecent = (durationSinceLastBeat > 1200 || barsWithoutBeats >= 1);
-    bool hasActiveBeatGroove = (barsWithoutBeats == 0) && (durationSinceLastBeat <= (barDur * 5 / 4)) && (beatProbability >= 0.20f || constantBeats);
-
-    SoundEnergy updatedEnergy = soundEnergy;
-
-    if (isVolumeCollapsed && noBeatsRecent) {
-      if (soundEnergy == SoundEnergy::OUTRO) {
-        if (currentLevel >= noiseFloor + 6.0f && average1sLevel >= 18.0f) {
-          updatedEnergy = SoundEnergy::BREAKDOWN;
-        } else {
-          updatedEnergy = SoundEnergy::OUTRO;
-        }
-      } else if (soundEnergy == SoundEnergy::BREAKDOWN && timeSincePhraseChange >= 20000 && barsSinceEnergyUpdate >= 10) {
-        updatedEnergy = SoundEnergy::OUTRO;
-      } else {
-        updatedEnergy = SoundEnergy::BREAKDOWN;
-      }
-    } else if (((peak1sLevel >= 48.0f || average1sLevel >= 36.0f) || (dropInLastPhrase && (peak1sLevel >= 42.0f || average1sLevel >= 32.0f))) && (beatInLastPhrase || beatDetected)) {
-      updatedEnergy = SoundEnergy::CHORUS;
-    } else if (hasActiveBeatGroove && (peak1sLevel >= 14.0f || average1sLevel >= 10.0f)) {
-      if (soundEnergy == SoundEnergy::CHORUS) {
-        // User rule: If switched to chorus, do NOT change back to verse for at least 8 bars (durationBetweenPhrases / 32 beats)
-        // If this transition is tentative (evaluating outlier), do not lock in 8 bars yet!
-        if (!isTentativeTransition && timeSincePhraseChange < phraseDur && peak1sLevel >= 38.0f) {
-          updatedEnergy = SoundEnergy::CHORUS;
-        } else if (nearPhraseBoundary && (!dropInLastPhrase || bassTrend < 0.90f) && (peak1sLevel < 52.0f)) {
-          if (barsWithoutBeats == 0 && currentLevel >= 18.0f && bassEnergy >= 20.0f) {
-            updatedEnergy = SoundEnergy::VERSE;
-          } else {
-            updatedEnergy = SoundEnergy::BREAKDOWN;
-          }
-        } else {
-          updatedEnergy = SoundEnergy::CHORUS;
-        }
-      } else if (soundEnergy == SoundEnergy::INTRO && timeSincePhraseChange < phraseDur) {
-        updatedEnergy = SoundEnergy::INTRO;
-      } else {
-        updatedEnergy = SoundEnergy::VERSE;
-      }
-    } else if ((soundEnergy == SoundEnergy::BREAKDOWN || soundEnergy == SoundEnergy::OUTRO || soundEnergy == SoundEnergy::VERSE) &&
-               (peak1sLevel >= 16.0f) &&
-               ((frame.bands[10] >= 30 && frame.bands[11] >= 40) ||
-                (barsWithoutBeats >= 1 && ((currentLevel > average1sLevel * 1.15f && peak1sLevel >= 20.0f) || (frame.majorPeakHz > 300.0f && (frame.bands[10] >= 20 || frame.bands[11] >= 20)))) ||
-                (bassTrend > 1.25f && barsWithoutBeats >= 1 && peak1sLevel >= 22.0f))) {
-      updatedEnergy = SoundEnergy::BUILDUP;
-    } else {
-      if (soundEnergy == SoundEnergy::OUTRO) {
-        if (currentLevel >= noiseFloor + 6.0f && average1sLevel >= 18.0f && !isVolumeCollapsed) {
-          updatedEnergy = SoundEnergy::BREAKDOWN;
-        } else {
-          updatedEnergy = SoundEnergy::OUTRO;
-        }
-      } else if (soundEnergy == SoundEnergy::CHORUS || soundEnergy == SoundEnergy::BREAKDOWN || isVolumeCollapsed || noBeatsRecent || bassTrend < 0.50f || (bassRatio < 0.15f && currentLevel > noiseFloor + 2.0f)) {
-        if (soundEnergy == SoundEnergy::BREAKDOWN && timeSincePhraseChange >= 20000 && barsSinceEnergyUpdate >= 10) {
-          updatedEnergy = SoundEnergy::OUTRO;
-        } else {
-          updatedEnergy = SoundEnergy::BREAKDOWN;
-        }
-      } else {
-        updatedEnergy = SoundEnergy::INTRO;
-      }
-    }
-
-    bool immediateBeatTransition = beatDetected && (updatedEnergy != soundEnergy);
-    if ((now - lastEnergyUpdateTime >= 1000) || immediateBeatTransition) {
-      if (updatedEnergy > soundEnergy) {
-        SoundEnergy prevEnergy = soundEnergy;
-        if (soundEnergy == SoundEnergy::OUTRO) {
-          if (updatedEnergy == SoundEnergy::CHORUS || peak1sLevel >= 48.0f) soundEnergy = SoundEnergy::CHORUS;
-          else if (updatedEnergy == SoundEnergy::BUILDUP) soundEnergy = SoundEnergy::BUILDUP;
-          else if (updatedEnergy == SoundEnergy::VERSE) soundEnergy = SoundEnergy::VERSE;
-          else soundEnergy = updatedEnergy;
-        } else if (soundEnergy == SoundEnergy::INTRO) {
-          if (updatedEnergy == SoundEnergy::CHORUS || peak1sLevel >= 48.0f) soundEnergy = SoundEnergy::CHORUS;
-          else if (updatedEnergy == SoundEnergy::BUILDUP) soundEnergy = SoundEnergy::BUILDUP;
-          else if (updatedEnergy == SoundEnergy::VERSE) soundEnergy = SoundEnergy::VERSE;
-          else soundEnergy = updatedEnergy;
-        } else if (soundEnergy == SoundEnergy::BREAKDOWN) {
-          if (updatedEnergy == SoundEnergy::CHORUS || peak1sLevel >= 48.0f) soundEnergy = SoundEnergy::CHORUS;
-          else if (updatedEnergy == SoundEnergy::BUILDUP) soundEnergy = SoundEnergy::BUILDUP;
-          else if (updatedEnergy == SoundEnergy::VERSE) soundEnergy = SoundEnergy::VERSE;
-          else soundEnergy = updatedEnergy;
-        } else if (soundEnergy == SoundEnergy::VERSE) {
-          if (updatedEnergy == SoundEnergy::CHORUS || peak1sLevel >= 48.0f) soundEnergy = SoundEnergy::CHORUS;
-          else if (updatedEnergy == SoundEnergy::BUILDUP || bassTrend > 1.25f) soundEnergy = SoundEnergy::BUILDUP;
-        } else if (soundEnergy == SoundEnergy::BUILDUP) {
-          if (updatedEnergy == SoundEnergy::CHORUS || (dropInLastPhrase && (peak1sLevel >= 38.0f || average1sLevel >= 28.0f)) || peak1sLevel >= 48.0f) {
-            soundEnergy = SoundEnergy::CHORUS;
-          } else if (updatedEnergy == SoundEnergy::VERSE) {
-            soundEnergy = SoundEnergy::VERSE;
-          }
-        } else {
-          soundEnergy = updatedEnergy;
-        }
-        if (soundEnergy != prevEnergy) {
-          lastEnergyUpdateTime = now;
-        }
-      } else if (updatedEnergy < soundEnergy) {
-        if (soundEnergy == SoundEnergy::CHORUS) {
-          if (!isTentativeTransition && timeSincePhraseChange < phraseDur && !isVolumeCollapsed) {
-            // Chorus locked for at least 8 bars (durationBetweenPhrases).
-            // Only allow transition down if audio dropped to breakdown level!
-            if ((updatedEnergy == SoundEnergy::BREAKDOWN || updatedEnergy == SoundEnergy::OUTRO) && (isVolumeCollapsed || barsWithoutBeats >= 1)) {
-              soundEnergy = SoundEnergy::BREAKDOWN;
-              lastEnergyUpdateTime = now;
-            }
-          } else {
-            if (updatedEnergy == SoundEnergy::VERSE && beatInLastBar && hasActiveBeatGroove) soundEnergy = SoundEnergy::VERSE;
-            else soundEnergy = SoundEnergy::BREAKDOWN;
-            lastEnergyUpdateTime = now;
-          }
-        } else if (soundEnergy == SoundEnergy::BUILDUP) {
-          if (barsSinceEnergyUpdate >= 16 || currentLevel < noiseFloor + 3.0f || isVolumeCollapsed) {
-            soundEnergy = SoundEnergy::BREAKDOWN;
-            lastEnergyUpdateTime = now;
-          } else if (updatedEnergy == SoundEnergy::VERSE && hasActiveBeatGroove) {
-            soundEnergy = SoundEnergy::VERSE;
-            lastEnergyUpdateTime = now;
-          }
-        } else if (soundEnergy == SoundEnergy::VERSE) {
-          if (updatedEnergy == SoundEnergy::BUILDUP) {
-            soundEnergy = SoundEnergy::BUILDUP;
-            lastEnergyUpdateTime = now;
-          } else if (updatedEnergy == SoundEnergy::BREAKDOWN || updatedEnergy == SoundEnergy::OUTRO ||
-                     bassTrend < 0.50f || barsWithoutBeats >= 1 || isVolumeCollapsed) {
-            soundEnergy = updatedEnergy;
-            lastEnergyUpdateTime = now;
-          }
-        } else if (soundEnergy == SoundEnergy::BUILDUP) {
-          if (barsSinceEnergyUpdate >= 16 || currentLevel < noiseFloor + 3.0f || isVolumeCollapsed) {
-            soundEnergy = SoundEnergy::BREAKDOWN;
-            lastEnergyUpdateTime = now;
-          }
-        } else if (soundEnergy == SoundEnergy::BREAKDOWN) {
-          if (timeSincePhraseChange >= 20000 && barsSinceEnergyUpdate >= 10) {
-            soundEnergy = SoundEnergy::OUTRO;
-            lastEnergyUpdateTime = now;
-          }
-        } else {
-          soundEnergy = updatedEnergy;
-          lastEnergyUpdateTime = now;
-        }
-      }
-    }
-
-    switch (soundEnergy) {
-      case SoundEnergy::CHORUS:    phraseState = MusicPhrase::CHORUS; break;
-      case SoundEnergy::BUILDUP:   phraseState = MusicPhrase::BUILDUP; break;
-      case SoundEnergy::BREAKDOWN: phraseState = MusicPhrase::BREAKDOWN; break;
-      case SoundEnergy::OUTRO:     phraseState = MusicPhrase::OUTRO; break;
-      case SoundEnergy::INTRO:     phraseState = MusicPhrase::INTRO; break;
-      case SoundEnergy::VERSE:     phraseState = MusicPhrase::VERSE; break;
-      default:                     phraseState = MusicPhrase::VERSE; break;
-    }
-    if (phraseState != phraseBeforeUpdate) {
-      if (!isTentativeTransition) {
-        tentativePrevEnergy = energyBeforeUpdate;
-        tentativePrevPhrase = phraseBeforeUpdate;
-        tentativePrevPhraseStartMs = (lastPhraseChangeMs > 0) ? lastPhraseChangeMs : now;
-        tentativeTransitionMs = now;
-        isTentativeTransition = true;
-        tentativeBeatsSeen = beatDetected ? 1 : 0;
-      }
-      lastPhraseChangeMs = now;
-      lastExpectedPhraseStart = now;
-    }
-  } else {
-    phraseState = MusicPhrase::UNKNOWN;
-    soundEnergy = SoundEnergy::SILENCE;
-    isTentativeTransition = false;
-  }
-
-  // 10. Dedicated Music Beat Probability
+  // 9. Dedicated Music Beat Probability (computed before phrasing so current frame's beat probability is active)
   if (presence == SoundPresence::QUIET || semanticState != AudioSemanticState::MUSIC) {
     beatProbability = 0.0f;
   } else {
@@ -1111,6 +839,317 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       }
       if (beatProbability < 0.02f) beatProbability = 0.0f;
     }
+  }
+
+  // 10. Phrasing & SoundEnergy State Machine (Rave-Totem Algorithm with Hysteresis & Dwell Guards)
+  if (semanticState == AudioSemanticState::MUSIC) {
+    float smoothAvg = fmaxf(average1sLevel, loudnessBuffer.rms);
+    float smoothPeak = fmaxf(peak1sLevel, loudnessBuffer.maxVal);
+
+    if (soundEnergy == SoundEnergy::SILENCE) {
+      phraseLevel = frame.levelPercent;
+      lowVolumeStartMs = 0;
+      if ((smoothPeak >= 45.0f || currentLevel >= 40.0f) && (smoothAvg >= 32.0f || currentLevel >= 35.0f)) {
+        soundEnergy = SoundEnergy::CHORUS;
+        phraseState = MusicPhrase::CHORUS;
+      } else {
+        soundEnergy = SoundEnergy::INTRO;
+        phraseState = MusicPhrase::INTRO;
+      }
+      shortBassEnergy = bassEnergy;
+      longBassEnergy = bassEnergy;
+      lastEnergyUpdateTime = now;
+      lastPhraseChangeMs = now;
+    } else {
+      phraseLevel = (phraseLevel * 0.98f) + (frame.levelPercent * 0.02f);
+    }
+
+    SoundEnergy energyBeforeUpdate = soundEnergy;
+    MusicPhrase phraseBeforeUpdate = phraseState;
+
+    shortBassEnergy = (shortBassEnergy * 0.92f) + (bassEnergy * 0.08f);
+    longBassEnergy = (longBassEnergy * 0.99f) + (bassEnergy * 0.01f);
+    float bassTrend = (longBassEnergy > 2.0f) ? (shortBassEnergy / longBassEnergy) : 1.0f;
+
+    uint32_t phraseDur = (durationBetweenPhrases > 0) ? durationBetweenPhrases : 16000;
+    uint32_t barDur = (durationBetweenBars > 0) ? durationBetweenBars : 2000;
+    uint32_t beatDur = (durationBetweenBeats > 0) ? durationBetweenBeats : 500;
+    uint32_t outlierWindowMs = (barDur > 0) ? (barDur + beatDur) : 2500;
+    if (outlierWindowMs < 1500) outlierWindowMs = 1500;
+    if (outlierWindowMs > 3500) outlierWindowMs = 3500;
+
+    // Outlier Detection & Revert Evaluation (Upward outlier protection only;
+    // downward transitions use sustained hysteresis/dwell to avoid ping-pong reverts)
+    if (isTentativeTransition) {
+      uint32_t dtTentative = (now >= tentativeTransitionMs) ? (now - tentativeTransitionMs) : 0;
+      if (beatDetected) {
+        tentativeBeatsSeen++;
+      }
+
+      if (dtTentative > outlierWindowMs) {
+        isTentativeTransition = false;
+      } else if ((phraseState == MusicPhrase::CHORUS || phraseState == MusicPhrase::VERSE) &&
+                 (tentativePrevPhrase != MusicPhrase::CHORUS && tentativePrevPhrase != MusicPhrase::VERSE)) {
+        if (tentativeBeatsSeen >= 2 || (smoothPeak >= 48.0f && bassBuffer.mean >= 20.0f && smoothAvg >= 28.0f)) {
+          isTentativeTransition = false;
+        } else {
+          uint32_t gapSinceBeat = (lastBeatTimestamp > 0) ? (now - lastBeatTimestamp) : dtTentative;
+          bool noFollowupBeat = (gapSinceBeat >= (uint32_t)(beatDur * 2.2f));
+          bool energyDropped = (peak1sLevel < 42.0f && bassBuffer.mean < 15.0f && currentLevel < 24.0f);
+
+          if (noFollowupBeat && energyDropped) {
+            soundEnergy = tentativePrevEnergy;
+            phraseState = tentativePrevPhrase;
+            lastPhraseChangeMs = tentativePrevPhraseStartMs;
+            lastExpectedPhraseStart = tentativePrevPhraseStartMs;
+            lastEnergyUpdateTime = now;
+            isTentativeTransition = false;
+            energyBeforeUpdate = soundEnergy;
+            phraseBeforeUpdate = phraseState;
+          }
+        }
+      } else {
+        isTentativeTransition = false;
+      }
+    }
+
+    uint32_t timeSincePhraseChange = (lastPhraseChangeMs > 0 && now >= lastPhraseChangeMs)
+                                     ? (now - lastPhraseChangeMs)
+                                     : phraseDur;
+    uint32_t phraseOffset = (durationBetweenPhrases > 0) ? (timeSincePhraseChange % durationBetweenPhrases) : 0;
+    uint32_t distToBoundary = (phraseOffset < phraseDur / 2)
+                              ? phraseOffset
+                              : (phraseDur - phraseOffset);
+    bool nearPhraseBoundary = (durationBetweenBars > 0) && (distToBoundary <= durationBetweenBars);
+
+    bool dropInLastPhrase = (lastDropTimestamp > 0) && (now - lastDropTimestamp <= phraseDur);
+    bool beatInLastPhrase = (lastBeatTimestamp > 0) && (now - lastBeatTimestamp <= phraseDur);
+    bool beatInLastBar = (lastBeatTimestamp > 0) && (now - lastBeatTimestamp <= barDur);
+    bool constantBeats = (beatsPerMinute > 0) && (now - lastBpmUpdateTime <= 2 * barDur);
+    uint32_t barsWithoutBeats = (durationBetweenBars > 0) ? (durationSinceLastBeat / durationBetweenBars) : (durationSinceLastBeat / 2000);
+    uint32_t barsSinceEnergyUpdate = (barDur > 0) ? ((now - lastEnergyUpdateTime) / barDur) : 0;
+
+    if (currentLevel < 12.0f && !beatDetected) {
+      if (lowVolumeStartMs == 0) lowVolumeStartMs = now;
+    } else if (currentLevel >= 14.0f || (beatDetected && currentLevel >= 12.0f)) {
+      lowVolumeStartMs = 0;
+    }
+    uint32_t lowVolumeDurMs = (lowVolumeStartMs > 0 && now >= lowVolumeStartMs) ? (now - lowVolumeStartMs) : 0;
+
+    bool isVolumeCollapsed = ((currentLevel < (noiseFloor + 4.0f) && average1sLevel < (noiseFloor + 6.0f)) ||
+                              (peak1sLevel < 12.0f && average1sLevel < 8.0f)) &&
+                             (lowVolumeDurMs >= 800 || loudnessBuffer.rms < (noiseFloor + 6.0f));
+    bool noBeatsRecent = (durationSinceLastBeat > 1200 || barsWithoutBeats >= 1);
+    bool hasActiveBeatGroove = (barsWithoutBeats == 0) && (durationSinceLastBeat <= (barDur * 5 / 4)) && (beatProbability >= 0.25f || constantBeats);
+
+    bool canEnterChorus = ((smoothPeak >= 48.0f && smoothAvg >= 32.0f && currentLevel >= 24.0f && bassTrend >= 0.85f) ||
+                           (dropInLastPhrase && (smoothPeak >= 42.0f || smoothAvg >= 32.0f) && smoothAvg >= 28.0f && currentLevel >= 22.0f && bassTrend >= 0.85f) ||
+                           (currentLevel >= 38.0f && smoothPeak >= 48.0f && bassTrend >= 1.35f)) &&
+                          (beatInLastPhrase || beatDetected);
+
+    bool canEnterVerseFromLow = hasActiveBeatGroove &&
+                                (beatProbability >= 0.40f) &&
+                                (durationSinceLastBeat <= 1000) &&
+                                (smoothAvg >= fmaxf(noiseFloor + 7.5f, 11.0f)) &&
+                                (loudnessBuffer.rms >= 10.5f) &&
+                                (smoothPeak >= 16.0f) &&
+                                (averageLoudnessPercent >= 48.0f);
+
+    bool canSustainVerseOrChorus = hasActiveBeatGroove &&
+                                   !isVolumeCollapsed &&
+                                   (smoothPeak >= 14.0f && smoothAvg >= 9.0f);
+
+    bool hasBuildupFeatures = (peak1sLevel >= 16.0f && smoothAvg >= 12.0f) &&
+                              ((frame.bands[10] >= 30 && frame.bands[11] >= 40) ||
+                               (barsWithoutBeats >= 1 && ((currentLevel > average1sLevel * 1.15f && peak1sLevel >= 20.0f && (frame.bands[10] >= 18 || frame.bands[11] >= 18)) ||
+                                                          (frame.majorPeakHz > 300.0f && (frame.bands[10] >= 20 || frame.bands[11] >= 20)))) ||
+                               (soundEnergy == SoundEnergy::VERSE && bassTrend > 1.25f && barsWithoutBeats >= 1 && peak1sLevel >= 22.0f));
+
+    SoundEnergy updatedEnergy = soundEnergy;
+
+    if (isVolumeCollapsed && noBeatsRecent) {
+      if (soundEnergy == SoundEnergy::OUTRO) {
+        if (currentLevel >= noiseFloor + 6.0f && average1sLevel >= 18.0f) {
+          updatedEnergy = SoundEnergy::BREAKDOWN;
+        } else {
+          updatedEnergy = SoundEnergy::OUTRO;
+        }
+      } else if (soundEnergy == SoundEnergy::BREAKDOWN && timeSincePhraseChange >= 20000 && barsSinceEnergyUpdate >= 10) {
+        updatedEnergy = SoundEnergy::OUTRO;
+      } else {
+        updatedEnergy = SoundEnergy::BREAKDOWN;
+      }
+    } else if (canEnterChorus) {
+      updatedEnergy = SoundEnergy::CHORUS;
+    } else if ((soundEnergy == SoundEnergy::CHORUS || soundEnergy == SoundEnergy::VERSE || soundEnergy == SoundEnergy::INTRO) && canSustainVerseOrChorus) {
+      if (soundEnergy == SoundEnergy::CHORUS) {
+        // If switched to chorus, do NOT change back to verse for at least 8 bars (durationBetweenPhrases / 32 beats)
+        if (!isTentativeTransition && timeSincePhraseChange < phraseDur && smoothPeak >= 35.0f) {
+          updatedEnergy = SoundEnergy::CHORUS;
+        } else if (nearPhraseBoundary && (!dropInLastPhrase || bassTrend < 0.90f) && (smoothPeak < 48.0f && smoothAvg < 34.0f && currentLevel < 34.0f)) {
+          if (barsWithoutBeats == 0 && currentLevel >= 18.0f && bassEnergy >= 20.0f) {
+            updatedEnergy = SoundEnergy::VERSE;
+          } else {
+            updatedEnergy = SoundEnergy::BREAKDOWN;
+          }
+        } else {
+          updatedEnergy = SoundEnergy::CHORUS;
+        }
+      } else if (soundEnergy == SoundEnergy::INTRO && timeSincePhraseChange < phraseDur) {
+        updatedEnergy = SoundEnergy::INTRO;
+      } else {
+        updatedEnergy = SoundEnergy::VERSE;
+      }
+    } else if ((soundEnergy == SoundEnergy::BREAKDOWN || soundEnergy == SoundEnergy::OUTRO) && canEnterVerseFromLow) {
+      updatedEnergy = SoundEnergy::VERSE;
+    } else if ((soundEnergy == SoundEnergy::BREAKDOWN || soundEnergy == SoundEnergy::OUTRO || soundEnergy == SoundEnergy::VERSE) && hasBuildupFeatures) {
+      updatedEnergy = SoundEnergy::BUILDUP;
+    } else if (soundEnergy == SoundEnergy::BUILDUP && !isVolumeCollapsed && smoothAvg >= noiseFloor + 4.0f && barsSinceEnergyUpdate < 16) {
+      updatedEnergy = SoundEnergy::BUILDUP;
+    } else {
+      if (soundEnergy == SoundEnergy::OUTRO) {
+        if (currentLevel >= noiseFloor + 6.0f && average1sLevel >= 18.0f && !isVolumeCollapsed) {
+          updatedEnergy = SoundEnergy::BREAKDOWN;
+        } else {
+          updatedEnergy = SoundEnergy::OUTRO;
+        }
+      } else if (soundEnergy == SoundEnergy::VERSE) {
+        if (isVolumeCollapsed || barsWithoutBeats >= 2 || (barsWithoutBeats >= 1 && loudnessBuffer.rms < 10.0f && currentLevel < 9.0f) || (bassTrend < 0.42f && loudnessBuffer.rms < 10.5f)) {
+          updatedEnergy = SoundEnergy::BREAKDOWN;
+        } else {
+          updatedEnergy = SoundEnergy::VERSE;
+        }
+      } else if (soundEnergy == SoundEnergy::INTRO) {
+        if (isVolumeCollapsed || (barsWithoutBeats >= 2 && loudnessBuffer.rms < 10.0f) || (noBeatsRecent && loudnessBuffer.rms < 8.5f)) {
+          updatedEnergy = SoundEnergy::BREAKDOWN;
+        } else {
+          updatedEnergy = SoundEnergy::INTRO;
+        }
+      } else if (soundEnergy == SoundEnergy::CHORUS) {
+        if (isVolumeCollapsed || (barsWithoutBeats >= 2 && currentLevel < 16.0f && average1sLevel < 22.0f) || (barsWithoutBeats >= 1 && currentLevel < 15.0f && loudnessBuffer.rms < 16.0f)) {
+          updatedEnergy = SoundEnergy::BREAKDOWN;
+        } else {
+          updatedEnergy = SoundEnergy::CHORUS;
+        }
+      } else {
+        if (soundEnergy == SoundEnergy::BREAKDOWN && timeSincePhraseChange >= 20000 && barsSinceEnergyUpdate >= 10) {
+          updatedEnergy = SoundEnergy::OUTRO;
+        } else {
+          updatedEnergy = SoundEnergy::BREAKDOWN;
+        }
+      }
+    }
+
+    bool immediateBeatTransition = beatDetected && (updatedEnergy == SoundEnergy::CHORUS || (updatedEnergy == SoundEnergy::VERSE && timeSincePhraseChange >= 3500)) && (updatedEnergy != soundEnergy);
+    if ((now - lastEnergyUpdateTime >= 1000) || immediateBeatTransition) {
+      if (updatedEnergy > soundEnergy) {
+        SoundEnergy prevEnergy = soundEnergy;
+        if (soundEnergy == SoundEnergy::OUTRO) {
+          if (updatedEnergy == SoundEnergy::CHORUS && timeSincePhraseChange >= 2000) soundEnergy = SoundEnergy::CHORUS;
+          else if (updatedEnergy == SoundEnergy::BUILDUP && timeSincePhraseChange >= 2000) soundEnergy = SoundEnergy::BUILDUP;
+          else if (updatedEnergy == SoundEnergy::VERSE && timeSincePhraseChange >= 3500) soundEnergy = SoundEnergy::VERSE;
+        } else if (soundEnergy == SoundEnergy::INTRO) {
+          if (updatedEnergy == SoundEnergy::CHORUS) soundEnergy = SoundEnergy::CHORUS;
+          else if (updatedEnergy == SoundEnergy::BUILDUP && timeSincePhraseChange >= 2000) soundEnergy = SoundEnergy::BUILDUP;
+          else if (updatedEnergy == SoundEnergy::VERSE && timeSincePhraseChange >= phraseDur) soundEnergy = SoundEnergy::VERSE;
+        } else if (soundEnergy == SoundEnergy::BREAKDOWN) {
+          if (updatedEnergy == SoundEnergy::CHORUS && timeSincePhraseChange >= 2000) soundEnergy = SoundEnergy::CHORUS;
+          else if (updatedEnergy == SoundEnergy::BUILDUP && timeSincePhraseChange >= 2000) soundEnergy = SoundEnergy::BUILDUP;
+          else if (updatedEnergy == SoundEnergy::VERSE && timeSincePhraseChange >= 3500) soundEnergy = SoundEnergy::VERSE;
+          else if (updatedEnergy == SoundEnergy::OUTRO && timeSincePhraseChange >= 20000 && barsSinceEnergyUpdate >= 10) soundEnergy = SoundEnergy::OUTRO;
+        } else if (soundEnergy == SoundEnergy::VERSE) {
+          if (updatedEnergy == SoundEnergy::CHORUS && (timeSincePhraseChange >= 2000 || smoothPeak >= 52.0f || bassTrend >= 1.40f)) soundEnergy = SoundEnergy::CHORUS;
+          else if (updatedEnergy == SoundEnergy::BUILDUP && timeSincePhraseChange >= 3000) soundEnergy = SoundEnergy::BUILDUP;
+        } else if (soundEnergy == SoundEnergy::BUILDUP) {
+          if (updatedEnergy == SoundEnergy::CHORUS || (dropInLastPhrase && (smoothPeak >= 38.0f || smoothAvg >= 28.0f) && smoothAvg >= 26.0f)) {
+            soundEnergy = SoundEnergy::CHORUS;
+          }
+        } else {
+          soundEnergy = updatedEnergy;
+        }
+        if (soundEnergy != prevEnergy) {
+          lastEnergyUpdateTime = now;
+        }
+      } else if (updatedEnergy < soundEnergy) {
+        if (soundEnergy == SoundEnergy::CHORUS) {
+          if (!isTentativeTransition && timeSincePhraseChange < phraseDur && !isVolumeCollapsed) {
+            if ((updatedEnergy == SoundEnergy::BREAKDOWN || updatedEnergy == SoundEnergy::OUTRO) &&
+                timeSincePhraseChange >= 2500 &&
+                (isVolumeCollapsed || (barsWithoutBeats >= 1 && currentLevel < 15.0f && loudnessBuffer.rms < 16.0f))) {
+              soundEnergy = SoundEnergy::BREAKDOWN;
+              lastEnergyUpdateTime = now;
+            }
+          } else {
+            if (updatedEnergy == SoundEnergy::VERSE && beatInLastBar && hasActiveBeatGroove) {
+              soundEnergy = SoundEnergy::VERSE;
+              lastEnergyUpdateTime = now;
+            } else if (isVolumeCollapsed || timeSincePhraseChange >= 2500) {
+              soundEnergy = SoundEnergy::BREAKDOWN;
+              lastEnergyUpdateTime = now;
+            }
+          }
+        } else if (soundEnergy == SoundEnergy::BUILDUP) {
+          if (barsSinceEnergyUpdate >= 16 || isVolumeCollapsed || smoothAvg < noiseFloor + 3.0f) {
+            soundEnergy = SoundEnergy::BREAKDOWN;
+            lastEnergyUpdateTime = now;
+          } else if (updatedEnergy == SoundEnergy::VERSE && hasActiveBeatGroove && timeSincePhraseChange >= 8000) {
+            soundEnergy = SoundEnergy::VERSE;
+            lastEnergyUpdateTime = now;
+          }
+        } else if (soundEnergy == SoundEnergy::VERSE) {
+          if (updatedEnergy == SoundEnergy::BREAKDOWN && (timeSincePhraseChange >= 3500 || isVolumeCollapsed)) {
+            soundEnergy = SoundEnergy::BREAKDOWN;
+            lastEnergyUpdateTime = now;
+          }
+        } else if (soundEnergy == SoundEnergy::INTRO) {
+          if (updatedEnergy == SoundEnergy::BREAKDOWN && (timeSincePhraseChange >= 3000 || isVolumeCollapsed)) {
+            soundEnergy = SoundEnergy::BREAKDOWN;
+            lastEnergyUpdateTime = now;
+          }
+        } else if (soundEnergy == SoundEnergy::BREAKDOWN) {
+          if (timeSincePhraseChange >= 20000 && barsSinceEnergyUpdate >= 10) {
+            soundEnergy = SoundEnergy::OUTRO;
+            lastEnergyUpdateTime = now;
+          }
+        } else if (soundEnergy == SoundEnergy::OUTRO) {
+          if (updatedEnergy == SoundEnergy::BREAKDOWN && timeSincePhraseChange >= 3000 && !canEnterVerseFromLow) {
+            soundEnergy = SoundEnergy::BREAKDOWN;
+            lastEnergyUpdateTime = now;
+          }
+        } else {
+          soundEnergy = updatedEnergy;
+          lastEnergyUpdateTime = now;
+        }
+      }
+    }
+
+    switch (soundEnergy) {
+      case SoundEnergy::CHORUS:    phraseState = MusicPhrase::CHORUS; break;
+      case SoundEnergy::BUILDUP:   phraseState = MusicPhrase::BUILDUP; break;
+      case SoundEnergy::BREAKDOWN: phraseState = MusicPhrase::BREAKDOWN; break;
+      case SoundEnergy::OUTRO:     phraseState = MusicPhrase::OUTRO; break;
+      case SoundEnergy::INTRO:     phraseState = MusicPhrase::INTRO; break;
+      case SoundEnergy::VERSE:     phraseState = MusicPhrase::VERSE; break;
+      default:                     phraseState = MusicPhrase::VERSE; break;
+    }
+    if (phraseState != phraseBeforeUpdate) {
+      if (!isTentativeTransition) {
+        tentativePrevEnergy = energyBeforeUpdate;
+        tentativePrevPhrase = phraseBeforeUpdate;
+        tentativePrevPhraseStartMs = (lastPhraseChangeMs > 0) ? lastPhraseChangeMs : now;
+        tentativeTransitionMs = now;
+        isTentativeTransition = true;
+        tentativeBeatsSeen = beatDetected ? 1 : 0;
+      }
+      lastPhraseChangeMs = now;
+      lastExpectedPhraseStart = now;
+    }
+  } else {
+    phraseState = MusicPhrase::UNKNOWN;
+    soundEnergy = SoundEnergy::SILENCE;
+    isTentativeTransition = false;
+    phraseLevel = 0.0f;
+    lowVolumeStartMs = 0;
   }
 
   // 11. BPM Gating: BPM is held during music state and cleared when leaving music
