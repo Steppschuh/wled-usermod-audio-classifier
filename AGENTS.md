@@ -126,9 +126,8 @@ curl -s http://<controller-ip>/json/info | python3 -m json.tool | grep -A 10 '"A
 Expected output confirms the usermod is running:
 ```json
 "AudioClassifier": [
-    "3.9% avg / 11.4% peak (Music)",
-    "Phrase: Verse (Energy: 80%, 128 BPM)",
-    "OK (Coupled with AudioReactive)"
+    "<button class=\"btn btn-xs\" onclick=\"requestJson({AudioClassifier:{enabled:false}});\"><i class=\"icons on\">&#xe08f;</i></button>",
+    " Type: Music, Energy: 80%"
 ]
 ```
 

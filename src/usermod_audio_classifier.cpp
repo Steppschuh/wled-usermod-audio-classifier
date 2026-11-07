@@ -26,7 +26,19 @@ void AudioClassifierUsermod::setup() {
 }
 
 void AudioClassifierUsermod::loop() {
-  if (!enabled || !initDone) return;
+  if (!initDone) return;
+
+  if (!enabled) {
+    if (classifier.isSoundDetected() || classifier.getSemanticState() != AudioSemanticState::SILENCE || classifier.getSoundEnergy() > 0 || classifier.getAverageLevelPercent() > 0.0f) {
+      classifier.reset();
+#ifndef WLED_DISABLE_MQTT
+      if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
+        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, true);
+      }
+#endif
+    }
+    return;
+  }
 
   AudioFrame frame;
   if (arSource.pollFrame(frame)) {
@@ -38,6 +50,16 @@ void AudioClassifierUsermod::loop() {
       publishRawFrame(frame);
     }
 #endif
+  } else if (!arSource.isAudioReactiveActive()) {
+    // AudioReactive is disabled or missing: reset classifier to 0 / silence / unknown
+    if (classifier.isSoundDetected() || classifier.getSemanticState() != AudioSemanticState::SILENCE || classifier.getSoundEnergy() > 0 || classifier.getAverageLevelPercent() > 0.0f) {
+      classifier.reset();
+#ifndef WLED_DISABLE_MQTT
+      if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
+        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, true);
+      }
+#endif
+    }
   }
 
 #ifndef WLED_DISABLE_MQTT
@@ -104,26 +126,88 @@ void AudioClassifierUsermod::addToJsonInfo(JsonObject& root) {
   if (user.isNull()) user = root.createNestedObject("u");
 
   JsonArray infoArr = user.createNestedArray(FPSTR(_name));
-  
+
+  String btnStr = F("<button class=\"btn btn-xs\" onclick=\"requestJson({");
+  btnStr += FPSTR(_name);
+  btnStr += F(":{");
+  btnStr += FPSTR(_enabled);
+  btnStr += enabled ? F(":false}});\">") : F(":true}});\">");
+  btnStr += F("<i class=\"icons");
+  btnStr += enabled ? F(" on") : F(" off");
+  btnStr += F("\">&#xe08f;</i>");
+  btnStr += F("</button>");
+
+  infoArr.add(btnStr);
+
   if (!enabled) {
-    infoArr.add("Disabled");
+    infoArr.add(F(" Disabled"));
     return;
   }
 
-  // Row 1: Relative Level & State
-  String levelStr = String(classifier.getAverageLevelPercent(), 1) + "% avg / " + String(classifier.getPeakLevelPercent(), 1) + "% peak (" + classifier.getSemanticStateStr() + ")";
-  infoArr.add(levelStr);
+  String infoStr = " Type: " + String(classifier.getSemanticStateStr()) + ", Energy: " + String(classifier.getSoundEnergy()) + "%";
+  infoArr.add(infoStr);
+}
 
-  // Row 2: Phrase State, Energy & BPM
-  String phraseStr = "Phrase: " + String(classifier.getPhraseStateStr()) + " (Energy: " + String(classifier.getSoundEnergy()) + "%";
-  if (classifier.getBPM() > 0) {
-    phraseStr += ", " + String(classifier.getBPM()) + " BPM";
+void AudioClassifierUsermod::addToJsonState(JsonObject& root) {
+  if (!initDone) return;
+  JsonObject usermod = root[FPSTR(_name)];
+  if (usermod.isNull()) {
+    usermod = root.createNestedObject(FPSTR(_name));
   }
-  phraseStr += ")";
-  infoArr.add(phraseStr);
+  usermod[FPSTR(_enabled)] = enabled;
+  usermod["on"] = enabled;
+}
 
-  // Row 3: Status / Warnings
-  infoArr.add(arSource.getStatusDescription());
+void AudioClassifierUsermod::readFromJsonState(JsonObject& root) {
+  if (!initDone) return;
+
+  JsonObject usermod = root[FPSTR(_name)];
+  if (!usermod.isNull()) {
+    bool stateChanged = false;
+    if (usermod[FPSTR(_enabled)].is<bool>()) {
+      bool newEnabled = usermod[FPSTR(_enabled)].as<bool>();
+      if (enabled != newEnabled) {
+        enabled = newEnabled;
+        stateChanged = true;
+      }
+    } else if (usermod["on"].is<bool>()) {
+      bool newEnabled = usermod["on"].as<bool>();
+      if (enabled != newEnabled) {
+        enabled = newEnabled;
+        stateChanged = true;
+      }
+    }
+    if (stateChanged && !enabled) {
+      classifier.reset();
+#ifndef WLED_DISABLE_MQTT
+      if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
+        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, true);
+      }
+#endif
+    }
+  }
+
+  // Also immediately detect if AudioReactive was toggled in this state update
+  JsonObject arObj = root[F("AudioReactive")];
+  if (!arObj.isNull()) {
+    bool arState = true;
+    bool hasArState = false;
+    if (arObj[F("enabled")].is<bool>()) {
+      arState = arObj[F("enabled")].as<bool>();
+      hasArState = true;
+    } else if (arObj["on"].is<bool>()) {
+      arState = arObj["on"].as<bool>();
+      hasArState = true;
+    }
+    if (hasArState && !arState) {
+      classifier.reset();
+#ifndef WLED_DISABLE_MQTT
+      if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
+        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, true);
+      }
+#endif
+    }
+  }
 }
 
 void AudioClassifierUsermod::addToConfig(JsonObject& root) {

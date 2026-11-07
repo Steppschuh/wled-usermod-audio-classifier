@@ -32,7 +32,7 @@ void AudioReactiveSource::updateConfig(JsonObject& root) {
 }
 
 bool AudioReactiveSource::isAudioReactiveActive() const {
-  return arFound && arEnabled;
+  return arFound && arEnabled && (status != AudioSourceStatus::AR_DISABLED) && (status != AudioSourceStatus::AR_MISSING);
 }
 
 const char* AudioReactiveSource::getStatusDescription() const {

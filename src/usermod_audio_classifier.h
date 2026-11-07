@@ -52,6 +52,8 @@ public:
 #endif
 
   void addToJsonInfo(JsonObject& root) override;
+  void addToJsonState(JsonObject& root) override;
+  void readFromJsonState(JsonObject& root) override;
   void addToConfig(JsonObject& root) override;
   bool readFromConfig(JsonObject& root) override;
   void appendConfigData() override;
