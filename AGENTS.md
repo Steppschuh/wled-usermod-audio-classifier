@@ -126,8 +126,8 @@ curl -s http://<controller-ip>/json/info | python3 -m json.tool | grep -A 10 '"A
 Expected output confirms the usermod is running:
 ```json
 "AudioClassifier": [
-    "<button class=\"btn btn-xs\" onclick=\"requestJson({AudioClassifier:{enabled:false}});\"><i class=\"icons on\">&#xe08f;</i></button>",
-    " Type: Music, Energy: 80%"
+    "Type: Music, Energy: 80%",
+    " <button class=\"btn btn-xs\" onclick=\"requestJson({AudioClassifier:{enabled:false}});\"><i class=\"icons on\">&#xe08f;</i></button>"
 ]
 ```
 

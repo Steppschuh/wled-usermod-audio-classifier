@@ -54,6 +54,7 @@ public:
   void addToJsonInfo(JsonObject& root) override;
   void addToJsonState(JsonObject& root) override;
   void readFromJsonState(JsonObject& root) override;
+  void setEnabled(bool newEnabled);
   void addToConfig(JsonObject& root) override;
   bool readFromConfig(JsonObject& root) override;
   void appendConfigData() override;

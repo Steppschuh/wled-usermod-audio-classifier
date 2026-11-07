@@ -37,13 +37,10 @@ bool AudioReactiveSource::isAudioReactiveActive() const {
 
 const char* AudioReactiveSource::getStatusDescription() const {
   switch (status) {
-    case AudioSourceStatus::OK:              return "OK (Coupled with AudioReactive)";
-    case AudioSourceStatus::AR_MISSING:     return "Error: AudioReactive usermod not present in build";
-    case AudioSourceStatus::AR_DISABLED:    return "Warning: AudioReactive is disabled in settings";
-    case AudioSourceStatus::AR_AGC_ON:      return "Warning: AudioReactive AGC is enabled (relative levels will float)";
-    case AudioSourceStatus::AR_RECEIVE_MODE:return "Info: AudioReactive is in network receive mode";
-    case AudioSourceStatus::NO_SIGNAL:      return "Warning: No audio signal detected from AudioReactive (>30s)";
-    default:                                return "Unknown";
+    case AudioSourceStatus::AR_MISSING:     return "AudioReactive mod missing";
+    case AudioSourceStatus::AR_DISABLED:    return "AudioReactive mod disabled";
+    case AudioSourceStatus::OK:
+    default:                                return "OK";
   }
 }
 

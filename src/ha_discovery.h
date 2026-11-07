@@ -11,14 +11,14 @@
 #include "ar_source.h"
 
 #ifndef USERMOD_AUDIO_CLASSIFIER_VERSION
-#define USERMOD_AUDIO_CLASSIFIER_VERSION "0.2.0"
+#define USERMOD_AUDIO_CLASSIFIER_VERSION "0.2.1"
 #endif
 
 class HomeAssistantAudioDiscovery {
 public:
   static void publishDiscovery(bool experimentalEnabled = true);
   static void removeDiscovery(bool experimentalEnabled = true);
-  static void publishTelemetry(const AudioClassifier& classifier, const AudioReactiveSource& source, bool force = false);
+  static void publishTelemetry(const AudioClassifier& classifier, const AudioReactiveSource& source, bool enabled = true, bool force = false);
   static String getBaseTopic();
   static String getStatusTopic();
 

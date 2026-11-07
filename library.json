@@ -1,6 +1,6 @@
 {
   "name": "wled-usermod-audio-classifier",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "WLED Usermod coupling with AudioReactive to provide ambient sound presence, relative sound level, and structural phrasing telemetry to Home Assistant via MQTT Auto-Discovery.",
   "keywords": "wled, usermod, audio, classifier, music, home-assistant, mqtt, presence, gledopto, esp32",
   "license": "EUPL-1.2",

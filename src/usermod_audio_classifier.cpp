@@ -33,7 +33,7 @@ void AudioClassifierUsermod::loop() {
       classifier.reset();
 #ifndef WLED_DISABLE_MQTT
       if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
-        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, true);
+        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, true);
       }
 #endif
     }
@@ -56,7 +56,7 @@ void AudioClassifierUsermod::loop() {
       classifier.reset();
 #ifndef WLED_DISABLE_MQTT
       if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
-        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, true);
+        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, true);
       }
 #endif
     }
@@ -68,7 +68,7 @@ void AudioClassifierUsermod::loop() {
       HomeAssistantAudioDiscovery::publishDiscovery();
       discoveryPublished = true;
     }
-    HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource);
+    HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled);
   }
 #endif
 }
@@ -76,16 +76,18 @@ void AudioClassifierUsermod::loop() {
 #ifndef WLED_DISABLE_MQTT
 void AudioClassifierUsermod::onMqttConnect(bool sessionPresent) {
   discoveryPublished = false;
-  if (enabled && haDiscoveryEnabled) {
+  if (haDiscoveryEnabled) {
     HomeAssistantAudioDiscovery::publishDiscovery();
-    HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, true);
+    HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, true);
     discoveryPublished = true;
   }
 
-  // Subscribe to raw stream command topic: wled/<device>/audio/stream
+  // Subscribe to command topics: raw stream and enable toggle switch
   if (mqtt != nullptr) {
-    String subTopic = HomeAssistantAudioDiscovery::getBaseTopic() + "stream";
-    mqtt->subscribe(subTopic.c_str(), 0);
+    String streamTopic = HomeAssistantAudioDiscovery::getBaseTopic() + "stream";
+    mqtt->subscribe(streamTopic.c_str(), 0);
+    String enableTopic = HomeAssistantAudioDiscovery::getBaseTopic() + "enabled/set";
+    mqtt->subscribe(enableTopic.c_str(), 0);
   }
 }
 
@@ -95,6 +97,14 @@ bool AudioClassifierUsermod::onMqttMessage(char* topic, char* payload) {
       rawStreamEnabled = true;
     } else {
       rawStreamEnabled = false;
+    }
+    return true;
+  }
+  if (strstr(topic, "/audio/enabled/set") != nullptr || strstr(topic, "audio/enabled/set") != nullptr) {
+    if (strcmp(payload, "ON") == 0 || strcmp(payload, "1") == 0 || strcmp(payload, "true") == 0) {
+      setEnabled(true);
+    } else if (strcmp(payload, "OFF") == 0 || strcmp(payload, "0") == 0 || strcmp(payload, "false") == 0) {
+      setEnabled(false);
     }
     return true;
   }
@@ -121,13 +131,27 @@ void AudioClassifierUsermod::publishRawFrame(const AudioFrame& frame) {
 }
 #endif
 
+void AudioClassifierUsermod::setEnabled(bool newEnabled) {
+  if (enabled != newEnabled) {
+    enabled = newEnabled;
+    if (!enabled) {
+      classifier.reset();
+    }
+#ifndef WLED_DISABLE_MQTT
+    if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
+      HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, true);
+    }
+#endif
+  }
+}
+
 void AudioClassifierUsermod::addToJsonInfo(JsonObject& root) {
   JsonObject user = root["u"];
   if (user.isNull()) user = root.createNestedObject("u");
 
   JsonArray infoArr = user.createNestedArray(FPSTR(_name));
 
-  String btnStr = F("<button class=\"btn btn-xs\" onclick=\"requestJson({");
+  String btnStr = F(" <button class=\"btn btn-xs\" onclick=\"requestJson({");
   btnStr += FPSTR(_name);
   btnStr += F(":{");
   btnStr += FPSTR(_enabled);
@@ -137,15 +161,15 @@ void AudioClassifierUsermod::addToJsonInfo(JsonObject& root) {
   btnStr += F("\">&#xe08f;</i>");
   btnStr += F("</button>");
 
-  infoArr.add(btnStr);
-
   if (!enabled) {
-    infoArr.add(F(" Disabled"));
+    infoArr.add(F("Disabled"));
+    infoArr.add(btnStr);
     return;
   }
 
-  String infoStr = " Type: " + String(classifier.getSemanticStateStr()) + ", Energy: " + String(classifier.getSoundEnergy()) + "%";
+  String infoStr = "Type: " + String(classifier.getSemanticStateStr()) + ", Energy: " + String(classifier.getSoundEnergy()) + "%";
   infoArr.add(infoStr);
+  infoArr.add(btnStr);
 }
 
 void AudioClassifierUsermod::addToJsonState(JsonObject& root) {
@@ -163,27 +187,10 @@ void AudioClassifierUsermod::readFromJsonState(JsonObject& root) {
 
   JsonObject usermod = root[FPSTR(_name)];
   if (!usermod.isNull()) {
-    bool stateChanged = false;
     if (usermod[FPSTR(_enabled)].is<bool>()) {
-      bool newEnabled = usermod[FPSTR(_enabled)].as<bool>();
-      if (enabled != newEnabled) {
-        enabled = newEnabled;
-        stateChanged = true;
-      }
+      setEnabled(usermod[FPSTR(_enabled)].as<bool>());
     } else if (usermod["on"].is<bool>()) {
-      bool newEnabled = usermod["on"].as<bool>();
-      if (enabled != newEnabled) {
-        enabled = newEnabled;
-        stateChanged = true;
-      }
-    }
-    if (stateChanged && !enabled) {
-      classifier.reset();
-#ifndef WLED_DISABLE_MQTT
-      if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
-        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, true);
-      }
-#endif
+      setEnabled(usermod["on"].as<bool>());
     }
   }
 
@@ -203,7 +210,7 @@ void AudioClassifierUsermod::readFromJsonState(JsonObject& root) {
       classifier.reset();
 #ifndef WLED_DISABLE_MQTT
       if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
-        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, true);
+        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, true);
       }
 #endif
     }

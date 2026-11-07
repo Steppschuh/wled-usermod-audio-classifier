@@ -94,7 +94,12 @@ Diagnostic sensor reporting the peak volume recorded over the last 1-second wind
 ---
 
 ### Audio Source Status
-Diagnostic sensor reporting coupling health with WLED's AudioReactive engine (e.g. `OK (Coupled with AudioReactive)`). Alerts if AudioReactive is disabled, AGC is active, or microphone frames stop arriving.
+Diagnostic sensor reporting coupling health with WLED's AudioReactive engine (`OK`, `AudioReactive mod disabled`, or `AudioReactive mod missing`).
+
+---
+
+### Audio Classifier
+Switch entity (`switch.<device>_audio_classifier`) allowing Home Assistant automations and dashboards to enable or disable the classifier mod on demand.
 
 ---
 

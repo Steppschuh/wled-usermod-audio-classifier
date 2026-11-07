@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-06
+## [0.2.1] - 2026-11-07
+
+### Added
+- **Home Assistant Switch Entity**: Added `switch.<device>_audio_classifier` allowing automations and dashboards to toggle AudioClassifier on/off via MQTT.
+- **Right-Aligned Info Screen Toggle Button**: Placed on/off toggle button at the end of the entry, cleanly aligned with other buttons in the WLED Info tab.
+
+### Changed
+- **Streamlined Audio Source Status**: Simplified diagnostic status sensor values to `"OK"`, `"AudioReactive mod disabled"`, and `"AudioReactive mod missing"`.
+- **Coupled Inactive State Handling**: When AudioReactive is disabled, AudioClassifier automatically detects deactivation and resets all acoustic state and telemetry to 0 / Silence / Unknown.
 
 ### Added
 - **Rave-Totem 8-State Musical Phrasing Engine**: Discrete musical energy and phrasing tracking (`Intro`, `Verse`, `Buildup`, `Chorus`, `Breakdown`, `Outro`) and dynamic `Music Energy` (`0–100%`) metric.
