@@ -14,7 +14,8 @@ enum class AudioSourceStatus : uint8_t {
   AR_DISABLED,
   AR_AGC_ON,
   AR_RECEIVE_MODE,
-  NO_SIGNAL
+  NO_SIGNAL,
+  CLIPPING
 };
 
 class AudioReactiveSource {
@@ -22,7 +23,8 @@ public:
   void init();
   void updateConfig(JsonObject& root);
   bool pollFrame(AudioFrame& outFrame);
-  AudioSourceStatus getStatus() const { return status; }
+  void setClipping(bool clipping) { clippingDetected = clipping; }
+  AudioSourceStatus getStatus() const;
   const char* getStatusDescription() const;
   bool isAudioReactiveActive() const;
 
@@ -32,6 +34,7 @@ private:
   bool arEnabled = true;
   bool arAgcOn = false;
   bool arReceiveMode = false;
+  bool clippingDetected = false;
 
   uint32_t lastSignalTime = 0;
   uint32_t lastPollTime = 0;

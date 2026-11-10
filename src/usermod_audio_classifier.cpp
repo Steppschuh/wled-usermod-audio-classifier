@@ -29,8 +29,9 @@ void AudioClassifierUsermod::loop() {
   if (!initDone) return;
 
   if (!enabled) {
-    if (classifier.isSoundDetected() || classifier.getSemanticState() != AudioSemanticState::SILENCE || classifier.getSoundEnergy() > 0 || classifier.getAverageLevelPercent() > 0.0f) {
+    if (classifier.isSoundDetected() || classifier.getSemanticState() != AudioSemanticState::SILENCE || classifier.getSoundEnergy() > 0 || classifier.getAverageLevelPercent() > 0.0f || classifier.isClipping()) {
       classifier.reset();
+      arSource.setClipping(false);
 #ifndef WLED_DISABLE_MQTT
       if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
         HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, true);
@@ -43,6 +44,7 @@ void AudioClassifierUsermod::loop() {
   AudioFrame frame;
   if (arSource.pollFrame(frame)) {
     classifier.processFrame(frame);
+    arSource.setClipping(classifier.isClipping());
 
 #ifndef WLED_DISABLE_MQTT
     if (rawStreamEnabled && WLED_MQTT_CONNECTED && (millis() - lastRawStreamMs >= 40)) {
@@ -52,8 +54,9 @@ void AudioClassifierUsermod::loop() {
 #endif
   } else if (!arSource.isAudioReactiveActive()) {
     // AudioReactive is disabled or missing: reset classifier to 0 / silence / unknown
-    if (classifier.isSoundDetected() || classifier.getSemanticState() != AudioSemanticState::SILENCE || classifier.getSoundEnergy() > 0 || classifier.getAverageLevelPercent() > 0.0f) {
+    if (classifier.isSoundDetected() || classifier.getSemanticState() != AudioSemanticState::SILENCE || classifier.getSoundEnergy() > 0 || classifier.getAverageLevelPercent() > 0.0f || classifier.isClipping()) {
       classifier.reset();
+      arSource.setClipping(false);
 #ifndef WLED_DISABLE_MQTT
       if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
         HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, true);
@@ -136,6 +139,7 @@ void AudioClassifierUsermod::setEnabled(bool newEnabled) {
     enabled = newEnabled;
     if (!enabled) {
       classifier.reset();
+      arSource.setClipping(false);
     }
 #ifndef WLED_DISABLE_MQTT
     if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
@@ -208,6 +212,7 @@ void AudioClassifierUsermod::readFromJsonState(JsonObject& root) {
     }
     if (hasArState && !arState) {
       classifier.reset();
+      arSource.setClipping(false);
 #ifndef WLED_DISABLE_MQTT
       if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
         HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, true);

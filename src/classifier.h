@@ -130,6 +130,7 @@ public:
   float getNoiseFloorPercent() const { return noiseFloor; }
   SoundPresence getPresence() const { return presence; }
   bool isSoundDetected() const { return presence == SoundPresence::SOUND; }
+  bool isClipping() const { return clippingDetected; }
 
   // Semantic, Phrasing, Energy & BPM Telemetry
   AudioSemanticState getSemanticState() const { return semanticState; }
@@ -175,6 +176,15 @@ private:
   size_t frameCount1s = 0;
   uint32_t last1sTickMs = 0;
   bool has1sTickStart = false;
+
+  // Clipping Detection (10-second sliding window of 1-second buckets)
+  static constexpr size_t CLIP_WINDOW_SECS = 10;
+  size_t clippedFrames1s = 0;
+  bool clipHistory[CLIP_WINDOW_SECS] = {false};
+  size_t clipHistoryIdx = 0;
+  size_t clipHistoryCount = 0;
+  uint8_t clipSecondsCount = 0;
+  bool clippingDetected = false;
 
   // Noise Floor Histogram (10th Percentile over up to 300s / 5min)
   static constexpr size_t HISTOGRAM_BINS = 101; // 0% to 100%

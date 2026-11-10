@@ -1103,6 +1103,74 @@ void test_chorus_to_breakdown_does_not_flip_to_outro_one_second_later(void) {
   TEST_ASSERT_EQUAL_STRING("Breakdown", classifier.getPhraseStateStr());
 }
 
+void test_clipping_detection_ignores_single_spike_and_triggers_on_repeated_or_constant(void) {
+  AudioClassifier classifier;
+  AudioFrame frame;
+
+  // 1. Single loud spike (1.5 seconds of saturation): should NOT trigger clipping
+  for (uint32_t t = 0; t <= 1500; t += 20) {
+    frame.timestampMs = t;
+    frame.rawVolume = 254.0f;
+    frame.smoothedVolume = 255.0f;
+    frame.levelPercent = 99.6f;
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(classifier.isClipping(), "Single spike should not trigger clipping");
+
+  // Followed by 10 seconds of normal non-clipping audio (50% level)
+  for (uint32_t t = 1520; t <= 12000; t += 20) {
+    frame.timestampMs = t;
+    frame.rawVolume = 128.0f;
+    frame.smoothedVolume = 128.0f;
+    frame.levelPercent = 50.2f;
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_FALSE(classifier.isClipping());
+
+  // 2. Repeated beat-level clipping: 3 separate seconds with >= 15% clipped frames inside 10s window
+  for (uint32_t sec = 0; sec < 5; sec++) {
+    uint32_t baseT = 12020 + sec * 1000;
+    bool clipThisSec = (sec == 0 || sec == 2 || sec == 4);
+    for (uint32_t i = 0; i < 50; i++) {
+      frame.timestampMs = baseT + i * 20;
+      if (clipThisSec && i < 10) { // 20% clipped frames in this second
+        frame.rawVolume = 254.0f;
+        frame.smoothedVolume = 230.0f;
+        frame.levelPercent = 99.6f;
+      } else {
+        frame.rawVolume = 180.0f;
+        frame.smoothedVolume = 180.0f;
+        frame.levelPercent = 70.6f;
+      }
+      classifier.processFrame(frame);
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(classifier.isClipping(), "Repeated clipping across 3 seconds should trigger clipping warning");
+
+  // 3. Recovery: 10+ clean seconds should clear clipping warning
+  for (uint32_t t = 17020; t <= 28500; t += 20) {
+    frame.timestampMs = t;
+    frame.rawVolume = 100.0f;
+    frame.smoothedVolume = 100.0f;
+    frame.levelPercent = 39.2f;
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(classifier.isClipping(), "Clipping warning should clear after 10 clean seconds");
+
+  // 4. Constant clipping (>= 3.5 seconds continuously pinned) triggers and reset() clears it
+  for (uint32_t t = 28520; t <= 32500; t += 20) {
+    frame.timestampMs = t;
+    frame.rawVolume = 255.0f;
+    frame.smoothedVolume = 255.0f;
+    frame.levelPercent = 100.0f;
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(classifier.isClipping(), "Constant clipping should trigger warning");
+
+  classifier.reset();
+  TEST_ASSERT_FALSE(classifier.isClipping());
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_initial_state_is_quiet_and_silence);
@@ -1130,5 +1198,6 @@ int main(int argc, char **argv) {
   RUN_TEST(test_phrase_penalty_calculator_penalizes_rapid_phrase_churn);
   RUN_TEST(test_edm_macro_structure_phrase_progression_and_anti_churn);
   RUN_TEST(test_chorus_to_breakdown_does_not_flip_to_outro_one_second_later);
+  RUN_TEST(test_clipping_detection_ignores_single_spike_and_triggers_on_repeated_or_constant);
   return UNITY_END();
 }

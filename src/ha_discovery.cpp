@@ -192,6 +192,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     opts.add("OK");
     opts.add("AudioReactive mod disabled");
     opts.add("AudioReactive mod missing");
+    opts.add("Clipping, reduce gain");
     doc["icon"] = "mdi:microphone-outline";
     doc["entity_category"] = "diagnostic";
     doc["uniq_id"] = chipId + "_audio_status";

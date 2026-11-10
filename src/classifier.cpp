@@ -22,6 +22,13 @@ void AudioClassifier::reset() {
   last1sTickMs = 0;
   has1sTickStart = false;
 
+  clippedFrames1s = 0;
+  for (size_t i = 0; i < CLIP_WINDOW_SECS; i++) clipHistory[i] = false;
+  clipHistoryIdx = 0;
+  clipHistoryCount = 0;
+  clipSecondsCount = 0;
+  clippingDetected = false;
+
   for (size_t i = 0; i < HISTOGRAM_BINS; i++) histogram[i] = 0;
   for (size_t i = 0; i < HISTORY_MAX_SECS; i++) historyRing[i] = 0;
   historyIdx = 0;
@@ -205,9 +212,13 @@ void AudioClassifier::processFrame(const AudioFrame& frame) {
     current1sPeak = frame.levelPercent;
   }
 
-  // 2. Accumulate energy for 1-second metric
+  // 2. Accumulate energy and saturation count for 1-second metrics
   sumSquaredEnergy += (frame.levelPercent * frame.levelPercent);
   frameCount1s++;
+
+  if (frame.rawVolume >= 253.0f || frame.smoothedVolume >= 253.0f || frame.levelPercent >= 99.0f) {
+    clippedFrames1s++;
+  }
 
   if (!has1sTickStart) {
     last1sTickMs = now;
@@ -251,6 +262,34 @@ void AudioClassifier::update1sMetrics(uint32_t now) {
   if (frameCount1s > 0) {
     average1sLevel = sqrtf(sumSquaredEnergy / (float)frameCount1s);
     peak1sLevel = current1sPeak;
+
+    // Evaluate per-second clipping ratio over a 10-second sliding window
+    float clipRatio = (float)clippedFrames1s / (float)frameCount1s;
+    bool isClipSec = (clippedFrames1s >= 3 && clipRatio >= 0.10f);
+
+    if (clipHistoryCount == CLIP_WINDOW_SECS) {
+      if (clipHistory[clipHistoryIdx] && clipSecondsCount > 0) {
+        clipSecondsCount--;
+      }
+    } else {
+      clipHistoryCount++;
+    }
+
+    clipHistory[clipHistoryIdx] = isClipSec;
+    if (isClipSec) {
+      clipSecondsCount++;
+    }
+    clipHistoryIdx = (clipHistoryIdx + 1) % CLIP_WINDOW_SECS;
+
+    if (!clippingDetected) {
+      if (clipSecondsCount >= 3) {
+        clippingDetected = true;
+      }
+    } else {
+      if (clipSecondsCount == 0) {
+        clippingDetected = false;
+      }
+    }
   } else {
     average1sLevel = currentLevel;
     peak1sLevel = currentLevel;
@@ -258,6 +297,7 @@ void AudioClassifier::update1sMetrics(uint32_t now) {
   sumSquaredEnergy = 0.0f;
   current1sPeak = 0.0f;
   frameCount1s = 0;
+  clippedFrames1s = 0;
 
   // Only adapt baseline background noise floor while the room is in QUIET state
   // and sound is not actively pending to turn on.

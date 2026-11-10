@@ -35,10 +35,23 @@ bool AudioReactiveSource::isAudioReactiveActive() const {
   return arFound && arEnabled && (status != AudioSourceStatus::AR_DISABLED) && (status != AudioSourceStatus::AR_MISSING);
 }
 
+AudioSourceStatus AudioReactiveSource::getStatus() const {
+  if (status == AudioSourceStatus::AR_MISSING ||
+      status == AudioSourceStatus::AR_DISABLED ||
+      status == AudioSourceStatus::NO_SIGNAL) {
+    return status;
+  }
+  if (clippingDetected) {
+    return AudioSourceStatus::CLIPPING;
+  }
+  return status;
+}
+
 const char* AudioReactiveSource::getStatusDescription() const {
-  switch (status) {
+  switch (getStatus()) {
     case AudioSourceStatus::AR_MISSING:     return "AudioReactive mod missing";
     case AudioSourceStatus::AR_DISABLED:    return "AudioReactive mod disabled";
+    case AudioSourceStatus::CLIPPING:       return "Clipping, reduce gain";
     case AudioSourceStatus::OK:
     default:                                return "OK";
   }
@@ -54,6 +67,7 @@ bool AudioReactiveSource::pollFrame(AudioFrame& outFrame) {
     } else {
       status = AudioSourceStatus::AR_DISABLED;
     }
+    clippingDetected = false;
     return false;
   }
 

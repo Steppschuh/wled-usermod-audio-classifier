@@ -70,7 +70,7 @@ Diagnostic sensor reporting the continuous 1-second rolling RMS sound level from
 Diagnostic sensor reporting the peak volume recorded over the last 1-second window (`0.0%` to `100.0%`). Tracks instantaneous transients, percussion hits, and loud impacts.
 
 ### Audio Source Status
-Diagnostic sensor reporting coupling health with WLED's AudioReactive engine (`OK`, `AudioReactive mod disabled`, or `AudioReactive mod missing`).
+Diagnostic sensor reporting coupling health with WLED's AudioReactive engine (`OK`, `Clipping, reduce gain`, `AudioReactive mod disabled`, or `AudioReactive mod missing`).
 
 ---
 
@@ -123,9 +123,18 @@ pio run -e esp32dev -t upload
 ```
 
 ### MQTT Setup
-1. **Home Assistant**: Ensure the [MQTT integration](https://www.home-assistant.io/integrations/mqtt/) is configured with **Enable discovery** turned on (enabled by default).
-2. **WLED**: Under **Config > Sync Interfaces > MQTT**, check **Enable MQTT**, enter your broker IP/port (`1883`) and credentials, and click **Save**.
-3. **Verify**: All `AudioClassifier` entities appear automatically under your WLED device in Home Assistant.
+To receive auto-discovered entities, WLED and Home Assistant must connect to the same MQTT broker:
+
+1. **Configure MQTT in Home Assistant**:
+   - Ensure the [Home Assistant MQTT integration](https://www.home-assistant.io/integrations/mqtt/#broker-configuration) is set up under **Settings > Devices & Services > Add Integration > MQTT**.
+   - If you do not have an MQTT broker running, install the official **Mosquitto broker** add-on via **Settings > Add-ons > Add-on Store**.
+   - Make sure **Enable discovery** is turned on in the MQTT integration options (enabled by default).
+2. **Configure MQTT in WLED**:
+   - In the WLED web UI, go to **Config > Sync Interfaces > MQTT**.
+   - Check **Enable MQTT**.
+   - Enter your broker IP or hostname, port (`1883`), username, and password.
+   - Leave the default topic (`wled/%mac%`) or enter a custom one.
+   - Click **Save**.
 
 ---
 

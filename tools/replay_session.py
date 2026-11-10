@@ -158,6 +158,14 @@ class SimulatedAudioClassifier:
         self.last_1s_tick = 0
         self.has_1s_tick_start = False
 
+        self.clip_window_secs = 10
+        self.clipped_frames_1s = 0
+        self.clip_history = [False] * self.clip_window_secs
+        self.clip_history_idx = 0
+        self.clip_history_count = 0
+        self.clip_seconds_count = 0
+        self.clipping_detected = False
+
         self.histogram = [0] * 101
         self.history_ring = [0] * 300
         self.history_idx = 0
@@ -251,9 +259,11 @@ class SimulatedAudioClassifier:
         if lvl > self.current_1s_peak:
             self.current_1s_peak = lvl
 
-        # 2. Accumulate energy for 1-second metric
+        # 2. Accumulate energy and saturation count for 1-second metrics
         self.sum_squared_energy += (lvl * lvl)
         self.frame_count_1s += 1
+        if raw >= 253.0 or smth >= 253.0 or lvl >= 99.0:
+            self.clipped_frames_1s += 1
 
         if not self.has_1s_tick_start:
             self.last_1s_tick = now
@@ -291,12 +301,34 @@ class SimulatedAudioClassifier:
         if self.frame_count_1s > 0:
             self.average_1s_level = math.sqrt(self.sum_squared_energy / self.frame_count_1s)
             self.peak_1s_level = self.current_1s_peak
+
+            clip_ratio = self.clipped_frames_1s / float(self.frame_count_1s)
+            is_clip_sec = (self.clipped_frames_1s >= 3 and clip_ratio >= 0.10)
+
+            if self.clip_history_count == self.clip_window_secs:
+                if self.clip_history[self.clip_history_idx] and self.clip_seconds_count > 0:
+                    self.clip_seconds_count -= 1
+            else:
+                self.clip_history_count += 1
+
+            self.clip_history[self.clip_history_idx] = is_clip_sec
+            if is_clip_sec:
+                self.clip_seconds_count += 1
+            self.clip_history_idx = (self.clip_history_idx + 1) % self.clip_window_secs
+
+            if not self.clipping_detected:
+                if self.clip_seconds_count >= 3:
+                    self.clipping_detected = True
+            else:
+                if self.clip_seconds_count == 0:
+                    self.clipping_detected = False
         else:
             self.average_1s_level = self.current_level
             self.peak_1s_level = self.current_level
         self.sum_squared_energy = 0.0
         self.current_1s_peak = 0.0
         self.frame_count_1s = 0
+        self.clipped_frames_1s = 0
 
         # Only adapt noise floor when QUIET and not pending on
         if self.presence == "quiet" and not self.is_pending_on:
