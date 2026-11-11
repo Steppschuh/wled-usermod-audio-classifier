@@ -4,6 +4,7 @@ code_review:
     help: false
     summary: true
     code_review: true
+  comment_severity_threshold: LOW
   include_drafts: true
 ignore_patterns:
   - ".pio/**"

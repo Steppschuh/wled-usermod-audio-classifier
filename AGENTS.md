@@ -11,6 +11,7 @@ The codebase is strictly separated into decoupled layers to enable native host t
 | File | Purpose | Dependencies / Constraints |
 | :--- | :--- | :--- |
 | `src/classifier.{h,cpp}` | Core acoustic state machine, 10th-percentile noise floor histogram, beat regularity tracker, and musical phrase classifier. | **Pure C++17 only.** Must NOT include Arduino, ESP32, FreeRTOS, or WLED headers. Must compile cleanly in `pio test -e native`. |
+| `src/auto_preset_controller.{h,cpp}` | Streaming `/presets.json` scanner and standalone auto-reactive preset selection controller. | **Pure C++17 only.** Must NOT include Arduino, ESP32, FreeRTOS, or WLED headers. Must compile cleanly in `pio test -e native`. |
 | `src/audio_frame.h` | Shared audio frame structure (`levelPercent`, `rawVolume`, `smoothedVolume`, `bands[16]`, `majorPeakHz`, `isPeak`, `timestampMs`). | Header-only, zero dependencies. |
 | `src/ar_source.{h,cpp}` | Interface bridge between WLED's `AudioReactive` usermod and `AudioClassifier`. Reads FFT and volume arrays using `getUMData()`. | Depends on WLED and AudioReactive types. Only compiled on ESP32 target. |
 | `src/ha_discovery.{h,cpp}` | Home Assistant MQTT Auto-Discovery configuration payloads and telemetry publishing. | Uses `ArduinoJson` (v6 or v7) and WLED MQTT client. |
@@ -244,6 +245,29 @@ Run native tests to verify:
 ```bash
 pio test -e native
 ```
+
+---
+
+## 📦 Versioning & Release Preparation
+
+This repository adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (`MAJOR.MINOR.PATCH`) and [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+### Where the Mod Version Is Defined
+Whenever bumping the usermod version for a release, **all** of the following files MUST be updated in lockstep:
+
+| File | Location / Key | Consumer |
+| :--- | :--- | :--- |
+| `library.json` | `"version": "X.Y.Z"` | Used by CI workflows (`.github/workflows/build-firmware.yml`, `preview-release.yml`, `sync-wled-releases.yml`) for release tags (`wled-<wled_tag>-mod-vX.Y.Z`) and artifact filenames. |
+| `src/ha_discovery.h` | `#define USERMOD_AUDIO_CLASSIFIER_VERSION "X.Y.Z"` | Embedded into firmware binaries and reported in Home Assistant MQTT discovery `sw_version`. |
+| `CHANGELOG.md` | `## [X.Y.Z] - YYYY-MM-DD` section under `## [Unreleased]` | Documents user-facing additions, changes, fixes, and references merged PRs / resolved issues. |
+
+### Semantic Versioning Bump Rules (`dev` → `main`)
+- **PATCH (`X.Y.Z+1`)**: Backwards-compatible bug fixes, threshold/DSP tuning fixes, CI/workflow updates, or documentation refinements with no new features.
+- **MINOR (`X.Y+1.0`)**: Backwards-compatible new features, new usermod configuration fields, new Home Assistant entities, or standalone capabilities.
+- **MAJOR (`X+1.0.0`)**: Breaking changes to MQTT topics/payloads, usermod JSON configuration keys, or incompatible behavioral changes.
+
+### Release PR Workflow
+Release preparation is automated via [`.github/workflows/gemini-release.yml`](.github/workflows/gemini-release.yml) (`workflow_dispatch`), which checks out `dev`, analyzes the diff against `main`, bumps the semantic version, updates `library.json`, `src/ha_discovery.h`, and `CHANGELOG.md` on a `release/<X.Y.Z>` branch, and opens a PR targeting `main`. Once merged to `main`, [`.github/workflows/sync-wled-releases.yml`](.github/workflows/sync-wled-releases.yml) automatically builds and publishes the GitHub release.
 
 ---
 

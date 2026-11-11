@@ -1,0 +1,201 @@
+name: '🚀 Gemini Release PR'
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: 'Source branch with unreleased changes'
+        type: 'string'
+        required: false
+        default: 'dev'
+      target_branch:
+        description: 'Target branch for the release PR'
+        type: 'string'
+        required: false
+        default: 'main'
+      version_override:
+        description: 'Optional explicit SemVer version (e.g. 0.3.1); leave blank for auto-bump'
+        type: 'string'
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      source_branch:
+        description: 'Source branch with unreleased changes'
+        type: 'string'
+        required: false
+        default: 'dev'
+      target_branch:
+        description: 'Target branch for the release PR'
+        type: 'string'
+        required: false
+        default: 'main'
+      version_override:
+        description: 'Optional explicit SemVer version (e.g. 0.3.1); leave blank for auto-bump'
+        type: 'string'
+        required: false
+        default: ''
+
+concurrency:
+  group: '${{ github.workflow }}-${{ inputs.source_branch || ''dev'' }}-${{ inputs.target_branch || ''main'' }}'
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: 'bash'
+
+jobs:
+  prepare-release:
+    name: 'Prepare Release PR with Gemini CLI'
+    timeout-minutes: 30
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: 'write'
+      id-token: 'write'
+      issues: 'read'
+      pull-requests: 'write'
+
+    steps:
+      - name: 'Mint identity token'
+        id: 'mint_identity_token'
+        if: |-
+          ${{ vars.APP_ID }}
+        uses: 'actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf'
+        with:
+          app-id: '${{ vars.APP_ID }}'
+          private-key: '${{ secrets.APP_PRIVATE_KEY }}'
+          permission-contents: 'write'
+          permission-issues: 'read'
+          permission-pull-requests: 'write'
+
+      - name: 'Checkout Source Branch'
+        uses: 'actions/checkout@v7'
+        with:
+          ref: '${{ inputs.source_branch || ''dev'' }}'
+          fetch-depth: 0
+          token: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
+          persist-credentials: true
+
+      - name: 'Prepare Release Context'
+        id: 'prep'
+        env:
+          GH_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
+          SOURCE_BRANCH: '${{ inputs.source_branch || ''dev'' }}'
+          TARGET_BRANCH: '${{ inputs.target_branch || ''main'' }}'
+          VERSION_OVERRIDE: '${{ inputs.version_override || '''' }}'
+          REPOSITORY: '${{ github.repository }}'
+        run: |-
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin "${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
+
+          COMMIT_COUNT=$(git rev-list --count "origin/${TARGET_BRANCH}..HEAD")
+          if [[ "${COMMIT_COUNT}" -eq 0 ]]; then
+            echo "::notice::No commits on ${SOURCE_BRANCH} ahead of ${TARGET_BRANCH}. Skipping release PR."
+            echo "has_changes=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "has_changes=true" >> "${GITHUB_OUTPUT}"
+
+          CURRENT_VERSION=$(jq -r '.version // "0.0.0"' library.json)
+          RELEASE_DATE=$(date -u +%Y-%m-%d)
+          COMMITS=$(git log --pretty=format:'%h %s (%an)' "origin/${TARGET_BRANCH}..HEAD")
+          CHANGED_FILES=$(git diff --name-status "origin/${TARGET_BRANCH}...HEAD")
+          DIFF_STAT=$(git diff --stat "origin/${TARGET_BRANCH}...HEAD")
+          MERGED_PRS=$(gh pr list --repo "${REPOSITORY}" --state merged --limit 30 --json number,title,url,baseRefName,headRefName,mergedAt 2>/dev/null || echo "[]")
+
+          mkdir -p .gemini
+          jq -n \
+            --arg source_branch "${SOURCE_BRANCH}" \
+            --arg target_branch "${TARGET_BRANCH}" \
+            --arg current_version "${CURRENT_VERSION}" \
+            --arg version_override "${VERSION_OVERRIDE}" \
+            --arg release_date "${RELEASE_DATE}" \
+            --arg commit_count "${COMMIT_COUNT}" \
+            --arg commits "${COMMITS}" \
+            --arg changed_files "${CHANGED_FILES}" \
+            --arg diff_stat "${DIFF_STAT}" \
+            --arg repository "${REPOSITORY}" \
+            --argjson merged_prs "${MERGED_PRS}" \
+            '{
+              source_branch: $source_branch,
+              target_branch: $target_branch,
+              current_version: $current_version,
+              version_override: $version_override,
+              release_date: $release_date,
+              commit_count: $commit_count,
+              commits_since_target: $commits,
+              changed_files: $changed_files,
+              diff_stat: $diff_stat,
+              repository: $repository,
+              merged_prs: $merged_prs
+            }' > .gemini/context.json
+
+      - name: 'Run Gemini CLI'
+        id: 'run_gemini'
+        if: |-
+          ${{ steps.prep.outputs.has_changes == 'true' }}
+        uses: 'google-github-actions/run-gemini-cli@v0'
+        env:
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+          GITHUB_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
+          GH_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
+        with:
+          gcp_location: '${{ vars.GOOGLE_CLOUD_LOCATION }}'
+          gcp_project_id: '${{ vars.GOOGLE_CLOUD_PROJECT }}'
+          gcp_service_account: '${{ vars.SERVICE_ACCOUNT_EMAIL }}'
+          gcp_workload_identity_provider: '${{ vars.GCP_WIF_PROVIDER }}'
+          gemini_api_key: '${{ secrets.GEMINI_API_KEY }}'
+          gemini_cli_version: '${{ vars.GEMINI_CLI_VERSION }}'
+          gemini_debug: '${{ fromJSON(vars.GEMINI_DEBUG || vars.ACTIONS_STEP_DEBUG || false) }}'
+          gemini_model: '${{ vars.GEMINI_MODEL }}'
+          google_api_key: '${{ secrets.GOOGLE_API_KEY }}'
+          use_gemini_code_assist: '${{ vars.GOOGLE_GENAI_USE_GCA }}'
+          use_vertex_ai: '${{ vars.GOOGLE_GENAI_USE_VERTEXAI }}'
+          upload_artifacts: '${{ vars.UPLOAD_ARTIFACTS }}'
+          workflow_name: 'gemini-release'
+          settings: |-
+            {
+              "model": {
+                "maxSessionTurns": 35
+              },
+              "telemetry": {
+                "enabled": true,
+                "target": "local",
+                "outfile": ".gemini/telemetry.log"
+              },
+              "mcpServers": {
+                "github": {
+                  "command": "docker",
+                  "args": [
+                    "run",
+                    "-i",
+                    "--rm",
+                    "-e",
+                    "GITHUB_PERSONAL_ACCESS_TOKEN",
+                    "ghcr.io/github/github-mcp-server:v0.27.0"
+                  ],
+                  "includeTools": [
+                    "create_pull_request",
+                    "pull_request_read",
+                    "list_pull_requests",
+                    "search_pull_requests",
+                    "issue_read",
+                    "list_issues",
+                    "search_issues",
+                    "get_commit",
+                    "get_file_contents",
+                    "list_commits",
+                    "search_code"
+                  ],
+                  "env": {
+                    "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+                  }
+                }
+              }
+            }
+          prompt: '/gemini-release'
