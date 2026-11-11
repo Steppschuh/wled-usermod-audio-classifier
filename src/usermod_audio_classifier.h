@@ -9,6 +9,7 @@
 #include "audio_frame.h"
 #include "ar_source.h"
 #include "classifier.h"
+#include "auto_preset_controller.h"
 
 #ifndef USERMOD_ID_AUDIO_CLASSIFIER
   #define USERMOD_ID_AUDIO_CLASSIFIER 205
@@ -25,6 +26,15 @@ private:
   static const char _offDelay[];
   static const char _musicHold[];
   static const char _streamRaw[];
+  static const char _automation[];
+  static const char _autoSwitchPresets[];
+  static const char _manualOverrideHold[];
+  static const char _presetCooldown[];
+  static const char _presetNoMusic[];
+  static const char _presetLowEnergy[];
+  static const char _presetMidEnergy[];
+  static const char _presetHighEnergy[];
+  static const char _presetMaxEnergy[];
 
   bool enabled = true;
   bool haDiscoveryEnabled = true;
@@ -35,8 +45,19 @@ private:
   AudioReactiveSource arSource;
   AudioClassifier classifier;
 
+  AutoPresetConfig autoConfig;
+  PresetPoolRegistry presetRegistry;
+  AutoPresetController autoController;
+  bool presetsScanned = false;
+  unsigned long lastScannedPresetsModTime = 0;
+  uint8_t pendingAutoPresetId = 0;
+  uint32_t pendingAutoPresetStartMs = 0;
+  int16_t activeAutoPlaylistId = -1;
+
   bool initDone = false;
   bool discoveryPublished = false;
+
+  void scanPresetsIfNeeded();
 
 #ifndef WLED_DISABLE_MQTT
   void publishRawFrame(const AudioFrame& frame);
@@ -45,6 +66,7 @@ private:
 public:
   void setup() override;
   void loop() override;
+  void onStateChange(uint8_t mode) override;
 
 #ifndef WLED_DISABLE_MQTT
   void onMqttConnect(bool sessionPresent) override;
@@ -55,6 +77,7 @@ public:
   void addToJsonState(JsonObject& root) override;
   void readFromJsonState(JsonObject& root) override;
   void setEnabled(bool newEnabled);
+  void setAutoMode(bool newAutoMode);
   void addToConfig(JsonObject& root) override;
   bool readFromConfig(JsonObject& root) override;
   void appendConfigData() override;
