@@ -9,7 +9,7 @@ Follow the architecture boundaries and invariants defined in `AGENTS.md`:
 ## WLED & ArduinoJson Compatibility
 - Firmware integration files (`src/ar_source.*`, `src/ha_discovery.*`, `src/usermod_audio_classifier.*`) compile inside WLED on ESP32 using ArduinoJson v6 (`DynamicJsonDocument`, `StaticJsonDocument`), while native tests and newer builds may use ArduinoJson v7 (`JsonDocument`). Guard version differences with `#if ARDUINOJSON_VERSION_MAJOR >= 7`.
 - Guard ESP32/WLED files with `#ifdef ARDUINO_ARCH_ESP32` and MQTT code with `#ifndef WLED_DISABLE_MQTT`.
-- Preserve `DynamicJsonDocument(1024)` (not undersized `StaticJsonDocument`) for Home Assistant MQTT discovery payloads to prevent silent truncation of `dev.ids`.
+- Preserve `DynamicJsonDocument(1024)` for ArduinoJson v6 (or `JsonDocument` for v7), not undersized `StaticJsonDocument`, for Home Assistant MQTT discovery payloads to prevent silent truncation of `dev.ids`.
 
 ## Behavioral Invariants
 - If `Audio Type` is not `Music`, `Music Energy` must be `0%` and `Music Phrase` must be `Unknown`.
