@@ -166,11 +166,11 @@ Autonomously selects presets from `/presets.json` without an external automation
 | **`Auto Switch Presets`** | `false` | Enable standalone preset switching. Can also be toggled via MQTT (`Auto Switch Presets`) or `/json/state` (`AudioClassifier.auto_switch_presets`). |
 | **`Manual Override Hold`** | `true` | Pause automatic preset switching after manual WLED changes until audio returns to `Silence`. |
 | **`Preset Cooldown`** | `15 s` | Minimum dwell duration enforced between automated preset changes. |
-| **`Preset No Music`** | `0` | Preset ID (`1–250`) for `Silence` / `Ambient Noise`, or `0` to auto-discover presets starting with `Ambient` (`"Ambient *"`). |
-| **`Preset Low Energy`** | `0` | Preset ID for `Breakdown`, `Intro`, and `Outro`, or `0` to auto-discover `"AR Low *"` presets. |
-| **`Preset Mid Energy`** | `0` | Preset ID for `Verse`, or `0` to auto-discover `"AR Mid *"` presets. |
-| **`Preset High Energy`** | `0` | Preset ID for `Buildup`, or `0` to auto-discover `"AR High *"` presets. |
-| **`Preset Max Energy`** | `0` | Preset ID for `Chorus`, or `0` to auto-discover `"AR Max *"` presets. |
+| **`Preset No Music`** | `0` | Preset ID (`1–250`) for `Silence` / `Ambient Noise`, or `0` to match `Ambient *` presets. |
+| **`Preset Low Energy`** | `0` | Preset ID for `Breakdown`, `Intro`, and `Outro`, or `0` to match `AR Low *` presets. |
+| **`Preset Mid Energy`** | `0` | Preset ID for `Verse`, or `0` to match `AR Mid *` presets. |
+| **`Preset High Energy`** | `0` | Preset ID for `Buildup`, or `0` to match `AR High *` presets. |
+| **`Preset Max Energy`** | `0` | Preset ID for `Chorus`, or `0` to match `AR Max *` presets. |
 
 Prefix auto-discovery matches case-insensitively with any separator (e.g., `AR High: Strobe`, `AR High Strobe`, `AR High - Strobe`). When multiple presets match a slot, one is chosen randomly without immediate repeats; empty `AR *` pools fall back to the nearest populated AR energy pool.
 

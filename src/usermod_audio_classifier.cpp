@@ -383,24 +383,45 @@ bool AudioClassifierUsermod::readFromConfig(JsonObject& root) {
 
   bool prevHa = haDiscoveryEnabled;
 
-  enabled = top[FPSTR(_enabled)] | enabled;
-  haDiscoveryEnabled = top[FPSTR(_haDiscovery)] | haDiscoveryEnabled;
+  auto readBool = [](const JsonObject& obj, const char* progmemKey, bool& target) -> bool {
+    if (obj.isNull()) return false;
+    JsonVariantConst v = obj[FPSTR(progmemKey)];
+    if (v.isNull()) return false;
+    if (v.is<bool>()) {
+      target = v.as<bool>();
+      return true;
+    }
+    if (v.is<int>()) {
+      target = (v.as<int>() != 0);
+      return true;
+    }
+    if (v.is<const char*>()) {
+      const char* s = v.as<const char*>();
+      target = (strcmp(s, "false") != 0 && strcmp(s, "0") != 0 && s[0] != '\0');
+      return true;
+    }
+    return false;
+  };
+
+  readBool(top, _enabled, enabled);
+  readBool(top, _haDiscovery, haDiscoveryEnabled);
   config.quietThresholdPercent = top[FPSTR(_quietThreshold)] | config.quietThresholdPercent;
   config.marginAboveFloorPercent = top[FPSTR(_marginFloor)] | config.marginAboveFloorPercent;
   config.onDelayMs = top[FPSTR(_onDelay)] | config.onDelayMs;
   config.offDelayMs = top[FPSTR(_offDelay)] | config.offDelayMs;
   config.musicHoldMs = top[FPSTR(_musicHold)] | config.musicHoldMs;
-  rawStreamEnabled = top[FPSTR(_streamRaw)] | rawStreamEnabled;
+  readBool(top, _streamRaw, rawStreamEnabled);
 
   JsonObject autoObj = top[FPSTR(_automation)];
   bool hasCurrentAutomationKeys = !autoObj.isNull() && !autoObj[FPSTR(_autoSwitchPresets)].isNull();
   if (!autoObj.isNull()) {
-    if (!autoObj[FPSTR(_autoSwitchPresets)].isNull()) {
-      autoConfig.enabled = autoObj[FPSTR(_autoSwitchPresets)] | autoConfig.enabled;
-    } else if (!autoObj[F("auto-mode")].isNull()) {
-      autoConfig.enabled = autoObj[F("auto-mode")] | autoConfig.enabled;
+    if (!readBool(autoObj, _autoSwitchPresets, autoConfig.enabled)) {
+      JsonVariantConst legacyAuto = autoObj[F("auto-mode")];
+      if (!legacyAuto.isNull() && legacyAuto.is<bool>()) {
+        autoConfig.enabled = legacyAuto.as<bool>();
+      }
     }
-    autoConfig.manualOverrideHold = autoObj[FPSTR(_manualOverrideHold)] | autoConfig.manualOverrideHold;
+    readBool(autoObj, _manualOverrideHold, autoConfig.manualOverrideHold);
     autoConfig.cooldownSec = autoObj[FPSTR(_presetCooldown)] | autoConfig.cooldownSec;
 
     auto readOverride = [&](const char* key, const __FlashStringHelper* legacyKey, AutomationSlot slot) {
@@ -447,11 +468,11 @@ void AudioClassifierUsermod::appendConfigData() {
   oappend(SET_F("addInfo('AudioClassifier:off-delay', 1, ' ms');"));
   oappend(SET_F("addInfo('AudioClassifier:music-hold', 1, ' ms');"));
   oappend(SET_F("addInfo('AudioClassifier:automation:preset-cooldown', 1, ' s');"));
-  oappend(SET_F("addInfo('AudioClassifier:automation:preset-no-music', 1, ' (0 = auto: \"Ambient *\")');"));
-  oappend(SET_F("addInfo('AudioClassifier:automation:preset-low-energy', 1, ' (0 = auto: \"AR Low *\")');"));
-  oappend(SET_F("addInfo('AudioClassifier:automation:preset-mid-energy', 1, ' (0 = auto: \"AR Mid *\")');"));
-  oappend(SET_F("addInfo('AudioClassifier:automation:preset-high-energy', 1, ' (0 = auto: \"AR High *\")');"));
-  oappend(SET_F("addInfo('AudioClassifier:automation:preset-max-energy', 1, ' (0 = auto: \"AR Max *\")');"));
+  oappend(SET_F("addInfo('AudioClassifier:automation:preset-no-music', 1, ' (0 = Ambient *)');"));
+  oappend(SET_F("addInfo('AudioClassifier:automation:preset-low-energy', 1, ' (0 = AR Low *)');"));
+  oappend(SET_F("addInfo('AudioClassifier:automation:preset-mid-energy', 1, ' (0 = AR Mid *)');"));
+  oappend(SET_F("addInfo('AudioClassifier:automation:preset-high-energy', 1, ' (0 = AR High *)');"));
+  oappend(SET_F("addInfo('AudioClassifier:automation:preset-max-energy', 1, ' (0 = AR Max *)');"));
 }
 
 // Register usermod dynamically in WLED
