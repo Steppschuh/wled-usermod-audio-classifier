@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-11
+
+### Added
+- **Standalone Auto-Reactive Preset Switching**: Introduced autonomous preset switching driven by acoustic energy and musical phrase progression (`Ambient`, `AR Low`, `AR Mid`, `AR High`, `AR Max`) directly on the ESP32 without requiring Home Assistant or external automation rules ([#12](https://github.com/Steppschuh/wled-usermod-audio-classifier/pull/12), resolving [#8](https://github.com/Steppschuh/wled-usermod-audio-classifier/issues/8)).
+- **Auto Switch Presets Home Assistant Switch**: Added `switch.<device>_auto_switch_presets` entity and MQTT command topic (`audio/auto_switch_presets/set`) to enable or disable autonomous preset switching from dashboards or automations ([#12](https://github.com/Steppschuh/wled-usermod-audio-classifier/pull/12)).
+- **Preset Pool Discovery & Dynamic Fallback**: Streaming non-blocking scanner for `/presets.json` matching preset name prefixes with deduplication, cooldown dwell enforcement, and nearest-energy AR fallback hierarchies ([#12](https://github.com/Steppschuh/wled-usermod-audio-classifier/pull/12)).
+- **Microphone Clipping Detection**: Added real-time tracking of input saturation over a 10-second sliding window, reporting `Clipping, reduce gain` under the `Audio Source Status` diagnostic sensor.
+- **AI-Assisted CI/CD Workflows**: Added CodeRabbit and Gemini Code Assist review workflows, automated Gemini CLI dispatch, preview releases, and release automation pipelines ([#11](https://github.com/Steppschuh/wled-usermod-audio-classifier/pull/11)).
+
+### Changed
+- **Config & State Schema**: Added `automation` configuration settings (`auto-switch-presets`, `manual-override-hold`, `preset-cooldown`, and preset ID slot overrides) and exposed `auto_switch_presets` in `/json/state` ([#12](https://github.com/Steppschuh/wled-usermod-audio-classifier/pull/12)).
+- **Dependency Updates**: Bumped `actions/upload-artifact` from v4 to v7 in the firmware build workflow ([#9](https://github.com/Steppschuh/wled-usermod-audio-classifier/pull/9)).
+
+### Fixed
+- **LittleFS Flash Contention**: Switched `/presets.json` scanning to non-blocking chunked reads with bounded memory buffers to prevent blocking high-frequency loop execution ([#12](https://github.com/Steppschuh/wled-usermod-audio-classifier/pull/12)).
+- **Boolean Config Parsing**: Hardened usermod configuration ingestion to accept boolean, integer, and string representations across all toggle settings.
+
 ## [0.2.1] - 2026-11-07
 
 ### Added
