@@ -1,0 +1,79 @@
+name: Sync Main to Dev
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: sync-main-to-dev
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-main-to-dev:
+    name: Back-merge main into dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint identity token
+        id: mint_identity_token
+        if: |-
+          ${{ vars.APP_ID }}
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Checkout dev
+        uses: actions/checkout@v7
+        with:
+          ref: dev
+          fetch-depth: 0
+          token: ${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}
+          persist-credentials: true
+
+      - name: Merge main into dev
+        env:
+          GH_TOKEN: ${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          git fetch origin main:refs/remotes/origin/main
+
+          if git merge-base --is-ancestor refs/remotes/origin/main HEAD; then
+            echo "dev is already up to date with main."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git merge --no-edit refs/remotes/origin/main; then
+            git push origin dev
+            echo "Merged main into dev and pushed cleanly."
+          else
+            echo "::warning::Merge conflict when syncing main into dev; falling back to opening a PR."
+            git merge --abort || true
+
+            EXISTING_PR=$(gh pr list --repo "${REPOSITORY}" --state open --base dev --head main --json url --jq '.[0].url // ""' 2>/dev/null || true)
+            if [[ -n "${EXISTING_PR}" ]]; then
+              echo "A sync PR from main to dev is already open: ${EXISTING_PR}"
+              exit 1
+            fi
+
+            PR_URL=$(gh pr create \
+              --repo "${REPOSITORY}" \
+              --base dev \
+              --head main \
+              --title "chore: sync main into dev" \
+              --body "Automated back-merge from \`main\` into \`dev\` encountered merge conflicts and requires manual resolution.")
+            echo "Opened fallback sync PR: ${PR_URL}"
+            exit 1
+          fi

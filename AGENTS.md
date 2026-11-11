@@ -267,7 +267,7 @@ Whenever bumping the usermod version for a release, **all** of the following fil
 - **MAJOR (`X+1.0.0`)**: Breaking changes to MQTT topics/payloads, usermod JSON configuration keys, or incompatible behavioral changes.
 
 ### Release PR Workflow
-Release preparation is automated via [`.github/workflows/gemini-release.yml`](.github/workflows/gemini-release.yml) (`workflow_dispatch`), which checks out `dev`, analyzes the diff against the latest tagged release on `main`, bumps the semantic version, updates `library.json`, `src/ha_discovery.h`, and `CHANGELOG.md` on a `release/<X.Y.Z>` branch, and opens a PR targeting `main`. Once merged to `main`, [`.github/workflows/sync-wled-releases.yml`](.github/workflows/sync-wled-releases.yml) automatically builds and publishes the GitHub release.
+Release preparation is automated via [`.github/workflows/gemini-release.yml`](.github/workflows/gemini-release.yml) (`workflow_dispatch`), which checks out `dev`, analyzes the diff against the latest tagged release on `main`, bumps the semantic version, updates `library.json`, `src/ha_discovery.h`, and `CHANGELOG.md` on a `release/<X.Y.Z>` branch, and opens a PR targeting `main`. Once merged to `main`, [`.github/workflows/sync-wled-releases.yml`](.github/workflows/sync-wled-releases.yml) automatically builds and publishes the GitHub release, and [`.github/workflows/sync-main-to-dev.yml`](.github/workflows/sync-main-to-dev.yml) automatically back-merges `main` into `dev`.
 
 ---
 
