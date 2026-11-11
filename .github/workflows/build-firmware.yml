@@ -29,6 +29,11 @@ on:
         type: boolean
         required: false
         default: false
+      target_commitish:
+        description: 'Commitish (branch or SHA) that the release tag points to'
+        type: string
+        required: false
+        default: ''
   workflow_call:
     inputs:
       wled_ref:
@@ -51,6 +56,10 @@ on:
         type: boolean
         required: false
         default: false
+      target_commitish:
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -234,6 +243,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ inputs.target_commitish || github.sha }}
           name: ${{ inputs.release_title || inputs.release_tag || github.ref_name }}
           body: ${{ inputs.release_body || '' }}
           prerelease: ${{ inputs.prerelease || false }}
