@@ -16,17 +16,60 @@ const char AudioClassifierUsermod::_quietThreshold[] PROGMEM = "quiet-threshold"
 const char AudioClassifierUsermod::_marginFloor[]    PROGMEM = "margin-above-floor";
 const char AudioClassifierUsermod::_onDelay[]        PROGMEM = "on-delay";
 const char AudioClassifierUsermod::_offDelay[]       PROGMEM = "off-delay";
-const char AudioClassifierUsermod::_musicHold[]      PROGMEM = "music-hold";
-const char AudioClassifierUsermod::_streamRaw[]      PROGMEM = "stream-raw";
+const char AudioClassifierUsermod::_musicHold[]          PROGMEM = "music-hold";
+const char AudioClassifierUsermod::_streamRaw[]          PROGMEM = "stream-raw";
+const char AudioClassifierUsermod::_automation[]         PROGMEM = "automation";
+const char AudioClassifierUsermod::_autoMode[]           PROGMEM = "auto-mode";
+const char AudioClassifierUsermod::_manualOverrideHold[] PROGMEM = "manual-override-hold";
+const char AudioClassifierUsermod::_presetCooldown[]     PROGMEM = "preset-cooldown";
+const char AudioClassifierUsermod::_presetAmbient[]      PROGMEM = "preset-ambient";
+const char AudioClassifierUsermod::_presetArLow[]        PROGMEM = "preset-ar-low";
+const char AudioClassifierUsermod::_presetArMid[]        PROGMEM = "preset-ar-mid";
+const char AudioClassifierUsermod::_presetArHigh[]       PROGMEM = "preset-ar-high";
+const char AudioClassifierUsermod::_presetArMax[]        PROGMEM = "preset-ar-max";
 
 void AudioClassifierUsermod::setup() {
   arSource.init();
   classifier.setConfig(config);
+  autoController.setConfig(autoConfig);
   initDone = true;
+}
+
+void AudioClassifierUsermod::scanPresetsIfNeeded() {
+  if (!autoConfig.enabled) return;
+  if (presetsScanned && presetsModifiedTime == lastScannedPresetsModTime) return;
+  if (strip.isUpdating()) return;
+
+  File f = WLED_FS.open(FPSTR(getPresetsFileName()), "r");
+  if (!f) {
+    presetRegistry.clear();
+    presetRegistry.markScanned();
+    lastScannedPresetsModTime = presetsModifiedTime;
+    presetsScanned = true;
+    return;
+  }
+
+  PresetScanParser parser;
+  parser.reset(presetRegistry);
+  char buf[256];
+  while (f.available()) {
+    size_t n = f.readBytes(buf, sizeof(buf));
+    if (n == 0) break;
+    parser.feed(buf, n, presetRegistry);
+  }
+  f.close();
+  parser.finish(presetRegistry);
+
+  lastScannedPresetsModTime = presetsModifiedTime;
+  presetsScanned = true;
 }
 
 void AudioClassifierUsermod::loop() {
   if (!initDone) return;
+
+  if (pendingAutoPresetId != 0 && (millis() - pendingAutoPresetStartMs > 2000)) {
+    pendingAutoPresetId = 0;
+  }
 
   if (!enabled) {
     if (classifier.isSoundDetected() || classifier.getSemanticState() != AudioSemanticState::SILENCE || classifier.getSoundEnergy() > 0 || classifier.getAverageLevelPercent() > 0.0f || classifier.isClipping()) {
@@ -34,13 +77,14 @@ void AudioClassifierUsermod::loop() {
       arSource.setClipping(false);
 #ifndef WLED_DISABLE_MQTT
       if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
-        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, true);
+        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, autoConfig.enabled, true);
       }
 #endif
     }
     return;
   }
 
+  bool arActive = arSource.isAudioReactiveActive();
   AudioFrame frame;
   if (arSource.pollFrame(frame)) {
     classifier.processFrame(frame);
@@ -52,16 +96,39 @@ void AudioClassifierUsermod::loop() {
       publishRawFrame(frame);
     }
 #endif
-  } else if (!arSource.isAudioReactiveActive()) {
+  } else if (!arActive) {
     // AudioReactive is disabled or missing: reset classifier to 0 / silence / unknown
     if (classifier.isSoundDetected() || classifier.getSemanticState() != AudioSemanticState::SILENCE || classifier.getSoundEnergy() > 0 || classifier.getAverageLevelPercent() > 0.0f || classifier.isClipping()) {
       classifier.reset();
       arSource.setClipping(false);
 #ifndef WLED_DISABLE_MQTT
       if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
-        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, true);
+        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, autoConfig.enabled, true);
       }
 #endif
+    }
+  }
+
+  if (autoConfig.enabled && arActive) {
+    scanPresetsIfNeeded();
+    if (presetsScanned) {
+      bool stripOffOrNl = (bri == 0) || nightlightActive;
+      uint8_t targetPreset = autoController.update(
+          millis(),
+          enabled,
+          classifier.getSemanticState(),
+          classifier.getPhraseState(),
+          presetRegistry,
+          currentPreset,
+          currentPlaylist,
+          stripOffOrNl,
+          static_cast<uint32_t>(random(0x7FFFFFFF)));
+      if (targetPreset > 0 && targetPreset <= PresetPoolRegistry::MAX_PRESET_ID) {
+        pendingAutoPresetId = targetPreset;
+        pendingAutoPresetStartMs = millis();
+        activeAutoPlaylistId = -1;
+        applyPreset(targetPreset, CALL_MODE_DIRECT_CHANGE);
+      }
     }
   }
 
@@ -71,9 +138,32 @@ void AudioClassifierUsermod::loop() {
       HomeAssistantAudioDiscovery::publishDiscovery();
       discoveryPublished = true;
     }
-    HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled);
+    HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, autoConfig.enabled);
   }
 #endif
+}
+
+void AudioClassifierUsermod::onStateChange(uint8_t mode) {
+  if (!initDone || !enabled || !autoConfig.enabled || mode == CALL_MODE_INIT) return;
+
+  if (pendingAutoPresetId != 0 && (millis() - pendingAutoPresetStartMs <= 2000)) {
+    if (mode != CALL_MODE_NO_NOTIFY) {
+      if (currentPlaylist > 0 && currentPlaylist == pendingAutoPresetId) {
+        activeAutoPlaylistId = currentPlaylist;
+      } else {
+        activeAutoPlaylistId = -1;
+      }
+      pendingAutoPresetId = 0;
+    }
+    return;
+  }
+
+  if (activeAutoPlaylistId > 0 && currentPlaylist == activeAutoPlaylistId) {
+    return;
+  }
+
+  activeAutoPlaylistId = -1;
+  autoController.onManualStateChange();
 }
 
 #ifndef WLED_DISABLE_MQTT
@@ -81,16 +171,18 @@ void AudioClassifierUsermod::onMqttConnect(bool sessionPresent) {
   discoveryPublished = false;
   if (haDiscoveryEnabled) {
     HomeAssistantAudioDiscovery::publishDiscovery();
-    HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, true);
+    HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, autoConfig.enabled, true);
     discoveryPublished = true;
   }
 
-  // Subscribe to command topics: raw stream and enable toggle switch
+  // Subscribe to command topics: raw stream, enable toggle, and auto mode switch
   if (mqtt != nullptr) {
     String streamTopic = HomeAssistantAudioDiscovery::getBaseTopic() + "stream";
     mqtt->subscribe(streamTopic.c_str(), 0);
     String enableTopic = HomeAssistantAudioDiscovery::getBaseTopic() + "enabled/set";
     mqtt->subscribe(enableTopic.c_str(), 0);
+    String autoModeTopic = HomeAssistantAudioDiscovery::getBaseTopic() + "auto_mode/set";
+    mqtt->subscribe(autoModeTopic.c_str(), 0);
   }
 }
 
@@ -108,6 +200,14 @@ bool AudioClassifierUsermod::onMqttMessage(char* topic, char* payload) {
       setEnabled(true);
     } else if (strcmp(payload, "OFF") == 0 || strcmp(payload, "0") == 0 || strcmp(payload, "false") == 0) {
       setEnabled(false);
+    }
+    return true;
+  }
+  if (strstr(topic, "/audio/auto_mode/set") != nullptr || strstr(topic, "audio/auto_mode/set") != nullptr) {
+    if (strcmp(payload, "ON") == 0 || strcmp(payload, "1") == 0 || strcmp(payload, "true") == 0) {
+      setAutoMode(true);
+    } else if (strcmp(payload, "OFF") == 0 || strcmp(payload, "0") == 0 || strcmp(payload, "false") == 0) {
+      setAutoMode(false);
     }
     return true;
   }
@@ -140,10 +240,30 @@ void AudioClassifierUsermod::setEnabled(bool newEnabled) {
     if (!enabled) {
       classifier.reset();
       arSource.setClipping(false);
+      autoController.reset();
+      pendingAutoPresetId = 0;
+      activeAutoPlaylistId = -1;
     }
 #ifndef WLED_DISABLE_MQTT
     if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
-      HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, true);
+      HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, autoConfig.enabled, true);
+    }
+#endif
+  }
+}
+
+void AudioClassifierUsermod::setAutoMode(bool newAutoMode) {
+  if (autoConfig.enabled != newAutoMode) {
+    autoConfig.enabled = newAutoMode;
+    autoController.setConfig(autoConfig);
+    pendingAutoPresetId = 0;
+    activeAutoPlaylistId = -1;
+    if (!newAutoMode) {
+      autoController.reset();
+    }
+#ifndef WLED_DISABLE_MQTT
+    if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
+      HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, autoConfig.enabled, true);
     }
 #endif
   }
@@ -172,6 +292,9 @@ void AudioClassifierUsermod::addToJsonInfo(JsonObject& root) {
   }
 
   String infoStr = "Type: " + String(classifier.getSemanticStateStr()) + ", Energy: " + String(classifier.getSoundEnergy()) + "%";
+  if (autoConfig.enabled) {
+    infoStr += autoController.isManualOverrideActive() ? F(" [Auto: Hold]") : F(" [Auto]");
+  }
   infoArr.add(infoStr);
   infoArr.add(btnStr);
 }
@@ -184,6 +307,7 @@ void AudioClassifierUsermod::addToJsonState(JsonObject& root) {
   }
   usermod[FPSTR(_enabled)] = enabled;
   usermod["on"] = enabled;
+  usermod["auto"] = autoConfig.enabled;
 }
 
 void AudioClassifierUsermod::readFromJsonState(JsonObject& root) {
@@ -195,6 +319,9 @@ void AudioClassifierUsermod::readFromJsonState(JsonObject& root) {
       setEnabled(usermod[FPSTR(_enabled)].as<bool>());
     } else if (usermod["on"].is<bool>()) {
       setEnabled(usermod["on"].as<bool>());
+    }
+    if (usermod["auto"].is<bool>()) {
+      setAutoMode(usermod["auto"].as<bool>());
     }
   }
 
@@ -215,7 +342,7 @@ void AudioClassifierUsermod::readFromJsonState(JsonObject& root) {
       arSource.setClipping(false);
 #ifndef WLED_DISABLE_MQTT
       if (WLED_MQTT_CONNECTED && haDiscoveryEnabled) {
-        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, true);
+        HomeAssistantAudioDiscovery::publishTelemetry(classifier, arSource, enabled, autoConfig.enabled, true);
       }
 #endif
     }
@@ -232,6 +359,16 @@ void AudioClassifierUsermod::addToConfig(JsonObject& root) {
   top[FPSTR(_offDelay)] = config.offDelayMs;
   top[FPSTR(_musicHold)] = config.musicHoldMs;
   top[FPSTR(_streamRaw)] = rawStreamEnabled;
+
+  JsonObject autoObj = top.createNestedObject(FPSTR(_automation));
+  autoObj[FPSTR(_autoMode)] = autoConfig.enabled;
+  autoObj[FPSTR(_manualOverrideHold)] = autoConfig.manualOverrideHold;
+  autoObj[FPSTR(_presetCooldown)] = autoConfig.cooldownSec;
+  autoObj[FPSTR(_presetAmbient)] = autoConfig.presetOverrides[static_cast<size_t>(AutomationSlot::AMBIENT)];
+  autoObj[FPSTR(_presetArLow)]   = autoConfig.presetOverrides[static_cast<size_t>(AutomationSlot::AR_LOW)];
+  autoObj[FPSTR(_presetArMid)]   = autoConfig.presetOverrides[static_cast<size_t>(AutomationSlot::AR_MID)];
+  autoObj[FPSTR(_presetArHigh)]  = autoConfig.presetOverrides[static_cast<size_t>(AutomationSlot::AR_HIGH)];
+  autoObj[FPSTR(_presetArMax)]   = autoConfig.presetOverrides[static_cast<size_t>(AutomationSlot::AR_MAX)];
 }
 
 bool AudioClassifierUsermod::readFromConfig(JsonObject& root) {
@@ -252,7 +389,28 @@ bool AudioClassifierUsermod::readFromConfig(JsonObject& root) {
   config.musicHoldMs = top[FPSTR(_musicHold)] | config.musicHoldMs;
   rawStreamEnabled = top[FPSTR(_streamRaw)] | rawStreamEnabled;
 
+  JsonObject autoObj = top[FPSTR(_automation)];
+  bool hasAutomationSection = !autoObj.isNull();
+  if (hasAutomationSection) {
+    autoConfig.enabled = autoObj[FPSTR(_autoMode)] | autoConfig.enabled;
+    autoConfig.manualOverrideHold = autoObj[FPSTR(_manualOverrideHold)] | autoConfig.manualOverrideHold;
+    autoConfig.cooldownSec = autoObj[FPSTR(_presetCooldown)] | autoConfig.cooldownSec;
+
+    auto readOverride = [&](const char* key, AutomationSlot slot) {
+      int val = autoObj[FPSTR(key)] | (int)autoConfig.presetOverrides[static_cast<size_t>(slot)];
+      if (val < 0 || val > PresetPoolRegistry::MAX_PRESET_ID) val = 0;
+      autoConfig.presetOverrides[static_cast<size_t>(slot)] = static_cast<uint8_t>(val);
+    };
+    readOverride(_presetAmbient, AutomationSlot::AMBIENT);
+    readOverride(_presetArLow,   AutomationSlot::AR_LOW);
+    readOverride(_presetArMid,   AutomationSlot::AR_MID);
+    readOverride(_presetArHigh,  AutomationSlot::AR_HIGH);
+    readOverride(_presetArMax,   AutomationSlot::AR_MAX);
+  }
+
   classifier.setConfig(config);
+  autoController.setConfig(autoConfig);
+  presetsScanned = false;
 
 #ifndef WLED_DISABLE_MQTT
   if (initDone && WLED_MQTT_CONNECTED) {
@@ -266,7 +424,7 @@ bool AudioClassifierUsermod::readFromConfig(JsonObject& root) {
   }
 #endif
 
-  return true;
+  return hasAutomationSection;
 }
 
 void AudioClassifierUsermod::appendConfigData() {
@@ -275,6 +433,12 @@ void AudioClassifierUsermod::appendConfigData() {
   oappend(SET_F("addInfo('AudioClassifier:on-delay', 1, ' ms');"));
   oappend(SET_F("addInfo('AudioClassifier:off-delay', 1, ' ms');"));
   oappend(SET_F("addInfo('AudioClassifier:music-hold', 1, ' ms');"));
+  oappend(SET_F("addInfo('AudioClassifier:automation:preset-cooldown', 1, ' s');"));
+  oappend(SET_F("addInfo('AudioClassifier:automation:preset-ambient', 1, ' (0 = auto: Ambient)');"));
+  oappend(SET_F("addInfo('AudioClassifier:automation:preset-ar-low', 1, ' (0 = auto: AR Low)');"));
+  oappend(SET_F("addInfo('AudioClassifier:automation:preset-ar-mid', 1, ' (0 = auto: AR Mid)');"));
+  oappend(SET_F("addInfo('AudioClassifier:automation:preset-ar-high', 1, ' (0 = auto: AR High)');"));
+  oappend(SET_F("addInfo('AudioClassifier:automation:preset-ar-max', 1, ' (0 = auto: AR Max)');"));
 }
 
 // Register usermod dynamically in WLED

@@ -351,6 +351,35 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     serializeJson(doc, payload);
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
   }
+
+  // 11. Audio Auto Mode Switch
+  {
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+    JsonDocument doc;
+#else
+    DynamicJsonDocument doc(1024);
+#endif
+    doc["name"] = "Audio Auto Mode";
+    doc["stat_t"] = baseTopic + "auto_mode";
+    doc["cmd_t"] = baseTopic + "auto_mode/set";
+    doc["pl_on"] = "ON";
+    doc["pl_off"] = "OFF";
+    doc["stat_on"] = "ON";
+    doc["stat_off"] = "OFF";
+    doc["icon"] = "mdi:auto-fix";
+    doc["uniq_id"] = chipId + "_audio_auto_mode";
+    doc["avty_t"] = statusTopic;
+    doc["pl_avail"] = "online";
+    doc["pl_not_avail"] = "offline";
+
+    JsonObject dev = doc.createNestedObject("dev");
+    buildDevice(dev);
+
+    String topic = "homeassistant/switch/" + chipId + "_audio_auto_mode/config";
+    String payload;
+    serializeJson(doc, payload);
+    mqtt->publish(topic.c_str(), 0, true, payload.c_str());
+  }
 }
 
 void HomeAssistantAudioDiscovery::removeDiscovery(bool experimentalEnabled) {
@@ -358,6 +387,7 @@ void HomeAssistantAudioDiscovery::removeDiscovery(bool experimentalEnabled) {
   String chipId = String(escapedMac);
 
   mqtt->publish(("homeassistant/switch/" + chipId + "_audio_classifier/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/switch/" + chipId + "_audio_auto_mode/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_level_rms/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_level_peak/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_level/config").c_str(), 0, true, "");
@@ -377,7 +407,7 @@ void HomeAssistantAudioDiscovery::removeDiscovery(bool experimentalEnabled) {
   mqtt->publish(("homeassistant/sensor/" + chipId + "_music_beat_probability/config").c_str(), 0, true, "");
 }
 
-void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classifier, const AudioReactiveSource& source, bool enabled, bool force) {
+void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classifier, const AudioReactiveSource& source, bool enabled, bool autoMode, bool force) {
   if (!WLED_MQTT_CONNECTED) return;
 
   static uint32_t lastPubTime = 0;
@@ -389,6 +419,7 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
   static uint16_t lastBpm = 0;
   static AudioSourceStatus lastSourceStatus = AudioSourceStatus::OK;
   static bool lastEnabled = true;
+  static bool lastAutoMode = false;
 
   uint32_t now = millis();
   bool soundState = classifier.isSoundDetected();
@@ -404,7 +435,8 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
                       (soundEnergy != lastSoundEnergy) ||
                       (bpm != lastBpm) ||
                       (srcStatus != lastSourceStatus) ||
-                      (enabled != lastEnabled);
+                      (enabled != lastEnabled) ||
+                      (autoMode != lastAutoMode);
 
   bool timeForHeartbeat = (now - lastHeartbeatTime >= 30000);
   bool timeForLevel = (now - lastPubTime >= 1000);
@@ -453,6 +485,7 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
   // Publish state change / heartbeat telemetry
   if (force || stateChanged || timeForHeartbeat) {
     mqtt->publish((base + "enabled").c_str(), 0, false, enabled ? "ON" : "OFF");
+    mqtt->publish((base + "auto_mode").c_str(), 0, false, autoMode ? "ON" : "OFF");
     mqtt->publish((base + "detected").c_str(), 0, false, soundState ? "ON" : "OFF");
     mqtt->publish((base + "type").c_str(), 0, false, classifier.getSemanticStateStr());
     mqtt->publish((base + "state").c_str(), 0, false, classifier.getSemanticStateStr());
@@ -466,6 +499,7 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
     lastBpm = bpm;
     lastSourceStatus = srcStatus;
     lastEnabled = enabled;
+    lastAutoMode = autoMode;
 
     publishedAny = true;
   }

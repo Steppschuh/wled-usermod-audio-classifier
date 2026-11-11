@@ -18,7 +18,7 @@ class HomeAssistantAudioDiscovery {
 public:
   static void publishDiscovery(bool experimentalEnabled = true);
   static void removeDiscovery(bool experimentalEnabled = true);
-  static void publishTelemetry(const AudioClassifier& classifier, const AudioReactiveSource& source, bool enabled = true, bool force = false);
+  static void publishTelemetry(const AudioClassifier& classifier, const AudioReactiveSource& source, bool enabled = true, bool autoMode = false, bool force = false);
   static String getBaseTopic();
   static String getStatusTopic();
 
