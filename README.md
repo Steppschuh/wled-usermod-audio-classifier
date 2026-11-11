@@ -20,7 +20,7 @@ It taps into WLED's built-in `AudioReactive` stream in memory—with zero impact
 - **Debounced Sound Presence**: Configurable on/off delays (1.2 s / 8.0 s) ignore transient noises (claps, door slams) and brief track pauses.
 - **Musical Phrase & Energy Tracking**: Identifies `Intro`, `Verse`, `Buildup`, `Chorus`, `Breakdown`, and `Outro` alongside a dynamic `0–100%` energy score.
 - **BPM & Beat Confidence**: Estimates tempo (`60–240 bpm`) with octave-jump rejection and holds lock across quiet breakdowns.
-- **Standalone Auto Mode**: Autonomously switches WLED presets by energy and musical phrase using preset name prefixes (`Ambient`, `AR Low`, `AR Mid`, `AR High`, `AR Max`) or explicit preset IDs—no Home Assistant required.
+- **Auto Switch Presets**: Autonomously switches WLED presets by energy and musical phrase using preset name prefixes (`Ambient`, `AR Low`, `AR Mid`, `AR High`, `AR Max`) or explicit preset IDs—no Home Assistant required.
 - **100% Local & Private**: Processes FFT data in volatile ESP32 RAM; no audio is ever recorded or streamed.
 
 ---
@@ -73,8 +73,8 @@ Diagnostic sensor reporting the peak volume recorded over the last 1-second wind
 ### Audio Source Status
 Diagnostic sensor reporting coupling health with WLED's AudioReactive engine (`OK`, `Clipping, reduce gain`, `AudioReactive mod disabled`, or `AudioReactive mod missing`).
 
-### Audio Auto Mode
-Switch entity (`switch.<device>_audio_auto_mode`) to toggle Standalone Auto Mode on or off directly from Home Assistant.
+### Auto Switch Presets
+Switch entity (`switch.<device>_auto_switch_presets`) to toggle autonomous preset switching on or off directly from Home Assistant.
 
 ---
 
@@ -163,14 +163,14 @@ Autonomously selects presets from `/presets.json` without an external automation
 
 | Setting | Default | Description |
 | :--- | :--- | :--- |
-| **`Auto Mode`** | `false` | Enable standalone preset switching. Can also be toggled via MQTT (`Audio Auto Mode`) or `/json/state` (`AudioClassifier.auto`). |
+| **`Auto Switch Presets`** | `false` | Enable standalone preset switching. Can also be toggled via MQTT (`Auto Switch Presets`) or `/json/state` (`AudioClassifier.auto_switch_presets`). |
 | **`Manual Override Hold`** | `true` | Pause automatic preset switching after manual WLED changes until audio returns to `Silence`. |
 | **`Preset Cooldown`** | `15 s` | Minimum dwell duration enforced between automated preset changes. |
-| **`Preset Ambient`** | `0` | Preset ID (`1–250`) for `Silence` / `Ambient Noise`, or `0` to auto-discover presets starting with `Ambient`. |
-| **`Preset AR Low`** | `0` | Preset ID for `Breakdown`, `Intro`, and `Outro`, or `0` to auto-discover `AR Low` presets. |
-| **`Preset AR Mid`** | `0` | Preset ID for `Verse`, or `0` to auto-discover `AR Mid` presets. |
-| **`Preset AR High`** | `0` | Preset ID for `Buildup`, or `0` to auto-discover `AR High` presets. |
-| **`Preset AR Max`** | `0` | Preset ID for `Chorus`, or `0` to auto-discover `AR Max` presets. |
+| **`Preset No Music`** | `0` | Preset ID (`1–250`) for `Silence` / `Ambient Noise`, or `0` to auto-discover presets starting with `Ambient` (`"Ambient *"`). |
+| **`Preset Low Energy`** | `0` | Preset ID for `Breakdown`, `Intro`, and `Outro`, or `0` to auto-discover `"AR Low *"` presets. |
+| **`Preset Mid Energy`** | `0` | Preset ID for `Verse`, or `0` to auto-discover `"AR Mid *"` presets. |
+| **`Preset High Energy`** | `0` | Preset ID for `Buildup`, or `0` to auto-discover `"AR High *"` presets. |
+| **`Preset Max Energy`** | `0` | Preset ID for `Chorus`, or `0` to auto-discover `"AR Max *"` presets. |
 
 Prefix auto-discovery matches case-insensitively with any separator (e.g., `AR High: Strobe`, `AR High Strobe`, `AR High - Strobe`). When multiple presets match a slot, one is chosen randomly without immediate repeats; empty `AR *` pools fall back to the nearest populated AR energy pool.
 

@@ -27,14 +27,14 @@ private:
   static const char _musicHold[];
   static const char _streamRaw[];
   static const char _automation[];
-  static const char _autoMode[];
+  static const char _autoSwitchPresets[];
   static const char _manualOverrideHold[];
   static const char _presetCooldown[];
-  static const char _presetAmbient[];
-  static const char _presetArLow[];
-  static const char _presetArMid[];
-  static const char _presetArHigh[];
-  static const char _presetArMax[];
+  static const char _presetNoMusic[];
+  static const char _presetLowEnergy[];
+  static const char _presetMidEnergy[];
+  static const char _presetHighEnergy[];
+  static const char _presetMaxEnergy[];
 
   bool enabled = true;
   bool haDiscoveryEnabled = true;

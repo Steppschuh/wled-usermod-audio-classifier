@@ -65,6 +65,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_phrase/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_energy/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_bpm/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/switch/" + chipId + "_audio_auto_mode/config").c_str(), 0, true, "");
 
   // 1. Relative Audio Level Sensor (%)
   {
@@ -352,22 +353,22 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
   }
 
-  // 11. Audio Auto Mode Switch
+  // 11. Auto Switch Presets Switch
   {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
     DynamicJsonDocument doc(1024);
 #endif
-    doc["name"] = "Audio Auto Mode";
-    doc["stat_t"] = baseTopic + "auto_mode";
-    doc["cmd_t"] = baseTopic + "auto_mode/set";
+    doc["name"] = "Auto Switch Presets";
+    doc["stat_t"] = baseTopic + "auto_switch_presets";
+    doc["cmd_t"] = baseTopic + "auto_switch_presets/set";
     doc["pl_on"] = "ON";
     doc["pl_off"] = "OFF";
     doc["stat_on"] = "ON";
     doc["stat_off"] = "OFF";
     doc["icon"] = "mdi:auto-fix";
-    doc["uniq_id"] = chipId + "_audio_auto_mode";
+    doc["uniq_id"] = chipId + "_auto_switch_presets";
     doc["avty_t"] = statusTopic;
     doc["pl_avail"] = "online";
     doc["pl_not_avail"] = "offline";
@@ -375,7 +376,7 @@ void HomeAssistantAudioDiscovery::publishDiscovery(bool experimentalEnabled) {
     JsonObject dev = doc.createNestedObject("dev");
     buildDevice(dev);
 
-    String topic = "homeassistant/switch/" + chipId + "_audio_auto_mode/config";
+    String topic = "homeassistant/switch/" + chipId + "_auto_switch_presets/config";
     String payload;
     serializeJson(doc, payload);
     mqtt->publish(topic.c_str(), 0, true, payload.c_str());
@@ -387,6 +388,7 @@ void HomeAssistantAudioDiscovery::removeDiscovery(bool experimentalEnabled) {
   String chipId = String(escapedMac);
 
   mqtt->publish(("homeassistant/switch/" + chipId + "_audio_classifier/config").c_str(), 0, true, "");
+  mqtt->publish(("homeassistant/switch/" + chipId + "_auto_switch_presets/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/switch/" + chipId + "_audio_auto_mode/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_level_rms/config").c_str(), 0, true, "");
   mqtt->publish(("homeassistant/sensor/" + chipId + "_audio_level_peak/config").c_str(), 0, true, "");
@@ -485,7 +487,7 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
   // Publish state change / heartbeat telemetry
   if (force || stateChanged || timeForHeartbeat) {
     mqtt->publish((base + "enabled").c_str(), 0, false, enabled ? "ON" : "OFF");
-    mqtt->publish((base + "auto_mode").c_str(), 0, false, autoMode ? "ON" : "OFF");
+    mqtt->publish((base + "auto_switch_presets").c_str(), 0, false, autoMode ? "ON" : "OFF");
     mqtt->publish((base + "detected").c_str(), 0, false, soundState ? "ON" : "OFF");
     mqtt->publish((base + "type").c_str(), 0, false, classifier.getSemanticStateStr());
     mqtt->publish((base + "state").c_str(), 0, false, classifier.getSemanticStateStr());
