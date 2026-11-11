@@ -74,9 +74,17 @@ jobs:
             const request = (process.env.REQUEST || '').trim();
             core.setOutput('request', request);
 
-            if (request.startsWith("@gemini-cli /approve")) {
+            if (request.startsWith("@gemini-cli /spec")) {
+              const additionalContext = request.replace(/^@gemini-cli \/spec/, '').trim();
+              core.setOutput('command', 'spec');
+              core.setOutput('additional_context', additionalContext);
+            } else if (request.startsWith("@gemini-cli /approve")) {
               const additionalContext = request.replace(/^@gemini-cli \/approve/, '').trim();
               core.setOutput('command', 'approve');
+              core.setOutput('additional_context', additionalContext);
+            } else if (request.startsWith("@gemini-cli /plan")) {
+              const additionalContext = request.replace(/^@gemini-cli \/plan/, '').trim();
+              core.setOutput('command', 'invoke');
               core.setOutput('additional_context', additionalContext);
             } else if (request.startsWith("@gemini-cli")) {
               const additionalContext = request.replace(/^@gemini-cli/, '').trim();
@@ -97,6 +105,20 @@ jobs:
           gh issue comment "${ISSUE_NUMBER}" \
             --body "${MESSAGE}" \
             --repo "${REPOSITORY}"
+
+  spec:
+    needs: 'dispatch'
+    if: |-
+      ${{ needs.dispatch.outputs.command == 'spec' }}
+    uses: './.github/workflows/gemini-spec.yml'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      issues: 'write'
+      pull-requests: 'write'
+    with:
+      additional_context: '${{ needs.dispatch.outputs.additional_context }}'
+    secrets: 'inherit'
 
   invoke:
     needs: 'dispatch'
@@ -129,6 +151,7 @@ jobs:
   fallthrough:
     needs:
       - 'dispatch'
+      - 'spec'
       - 'invoke'
       - 'plan-execute'
     if: |-
@@ -162,3 +185,4 @@ jobs:
           gh issue comment "${ISSUE_NUMBER}" \
             --body "${MESSAGE}" \
             --repo "${REPOSITORY}"
+

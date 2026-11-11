@@ -1,0 +1,55 @@
+name: Publish Dev Preview Release
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-preview:
+    name: Prepare Preview Metadata
+    runs-on: ubuntu-latest
+    outputs:
+      wled_tag: ${{ steps.meta.outputs.wled_tag }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      usermod_tag: ${{ steps.meta.outputs.usermod_tag }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v7
+
+      - name: Resolve Preview Version & Tag
+        id: meta
+        run: |
+          WLED_TAG=$(gh api repos/wled/WLED/releases/latest --jq .tag_name 2>/dev/null || echo "6ee67dec94f3cd3fb2b85b81abb9de380b924c48")
+          USERMOD_VERSION=$(jq -r '.version // "0.1.0"' library.json)
+          USERMOD_TAG="v${USERMOD_VERSION#v}"
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          RELEASE_TAG="wled-${WLED_TAG}-mod-${USERMOD_TAG}-dev.${GITHUB_RUN_NUMBER}"
+
+          echo "wled_tag=${WLED_TAG}" >> "$GITHUB_OUTPUT"
+          echo "usermod_tag=${USERMOD_TAG}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-and-preview-release:
+    name: Build & Publish Preview Release
+    needs: prepare-preview
+    uses: ./.github/workflows/build-firmware.yml
+    with:
+      wled_ref: ${{ needs.prepare-preview.outputs.wled_tag }}
+      release_tag: ${{ needs.prepare-preview.outputs.release_tag }}
+      release_title: "WLED ${{ needs.prepare-preview.outputs.wled_tag }} with Audio Classifier ${{ needs.prepare-preview.outputs.usermod_tag }}-dev.${{ github.run_number }} (${{ needs.prepare-preview.outputs.short_sha }})"
+      release_body: |
+        Automated **dev preview** build from `dev` commit `${{ needs.prepare-preview.outputs.short_sha }}`, bundling **wled-usermod-audio-classifier ${{ needs.prepare-preview.outputs.usermod_tag }}** with **WLED [${{ needs.prepare-preview.outputs.wled_tag }}](https://github.com/wled/WLED/releases/tag/${{ needs.prepare-preview.outputs.wled_tag }})**.
+
+        > [!WARNING]
+        > This is a pre-release preview build from the `dev` branch intended for testing.
+      prerelease: true
+    secrets: inherit
