@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+early_access: false
+
+reviews:
+  profile: "chill"
+  high_level_summary: true
+  poem: false
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "main"
+      - "dev"
+
+  path_filters:
+    - "!.pio/**"
+    - "!test/fixtures/**"
+    - "!media/**"
+    - "!**/*.wav"
+    - "!**/*.bin"
+    - "!**/*.log"
+
+  path_instructions:
+    - path: "src/classifier.*"
+      instructions: |
+        - Must remain pure C++17 with NO Arduino, ESP32, FreeRTOS, or WLED headers.
+        - Preserve classifier behavioral invariants: non-music state lock (0% energy / Unknown phrase), Silence <-> Audio Detected coupling, noise floor freezing during SOUND, >= 20s breakdown persistence, Outro recovery hysteresis, and BPM octave-jump rejection.
+        - Any logic change in `src/classifier.cpp` should maintain parity with `tools/replay_session.py`.
+    - path: "src/auto_preset_controller.*"
+      instructions: |
+        - Must remain pure C++17 with zero Arduino/WLED dependencies so it compiles cleanly under `pio test -e native`.
+        - Verify bounded memory usage (no dynamic heap allocations inside frame/loop paths) and safe handling of missing or out-of-range preset IDs (1..250).
+    - path: "src/ha_discovery.*"
+      instructions: |
+        - Must remain compatible with both ArduinoJson v6 (WLED ESP32) and v7 via `#if ARDUINOJSON_VERSION_MAJOR >= 7`.
+        - Ensure MQTT discovery JSON documents have sufficient capacity (e.g. `DynamicJsonDocument(1024)`) and keep `removeDiscovery()` in sync with published entities.
+    - path: "src/usermod_audio_classifier.*"
+      instructions: |
+        - Must guard WLED/ESP32 code with `#ifdef ARDUINO_ARCH_ESP32` and MQTT hooks with `#ifndef WLED_DISABLE_MQTT`.
+        - Avoid LittleFS blocking or flash wear inside high-frequency `loop()` paths.
+    - path: "tools/replay_session.py"
+      instructions: |
+        - Verify classification logic stays in sync with `src/classifier.cpp`.
+    - path: "test/**"
+      instructions: |
+        - Ensure Unity unit tests cover edge cases and do not weaken existing assertions or invariants from `AGENTS.md`.

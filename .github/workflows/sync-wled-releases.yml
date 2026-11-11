@@ -1,6 +1,9 @@
 name: Sync Upstream WLED Releases
 
 on:
+  push:
+    branches:
+      - main
   schedule:
     # Run once daily at 06:00 UTC
     - cron: '0 6 * * *'
