@@ -53,9 +53,9 @@ void AudioClassifierUsermod::scanPresetsIfNeeded() {
   parser.reset(presetRegistry);
   char buf[256];
   while (f.available()) {
-    size_t n = f.readBytes(buf, sizeof(buf));
-    if (n == 0) break;
-    parser.feed(buf, n, presetRegistry);
+    int n = f.read(reinterpret_cast<uint8_t*>(buf), sizeof(buf));
+    if (n <= 0) break;
+    parser.feed(buf, static_cast<size_t>(n), presetRegistry);
   }
   f.close();
   parser.finish(presetRegistry);
@@ -203,8 +203,8 @@ bool AudioClassifierUsermod::onMqttMessage(char* topic, char* payload) {
     }
     return true;
   }
-  if (strstr(topic, "/audio/auto_switch_presets/set") != nullptr || strstr(topic, "audio/auto_switch_presets/set") != nullptr ||
-      strstr(topic, "/audio/auto_mode/set") != nullptr || strstr(topic, "audio/auto_mode/set") != nullptr) {
+  if (strstr(topic, "audio/auto_switch_presets/set") != nullptr ||
+      strstr(topic, "audio/auto_mode/set") != nullptr) {
     if (strcmp(payload, "ON") == 0 || strcmp(payload, "1") == 0 || strcmp(payload, "true") == 0) {
       setAutoMode(true);
     } else if (strcmp(payload, "OFF") == 0 || strcmp(payload, "0") == 0 || strcmp(payload, "false") == 0) {
