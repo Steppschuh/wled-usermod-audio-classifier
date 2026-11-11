@@ -3,6 +3,7 @@
 
 #include <unity.h>
 #include "classifier.h"
+#include "auto_preset_controller.h"
 
 void setUp(void) {
   // set stuff up here
@@ -1171,6 +1172,163 @@ void test_clipping_detection_ignores_single_spike_and_triggers_on_repeated_or_co
   TEST_ASSERT_FALSE(classifier.isClipping());
 }
 
+void test_auto_preset_prefix_matching_and_streaming_json_scan(void) {
+  TEST_ASSERT_TRUE(PresetPoolRegistry::matchPrefixToken("Ambient", "Ambient"));
+  TEST_ASSERT_TRUE(PresetPoolRegistry::matchPrefixToken("Ambient: Sunset", "Ambient"));
+  TEST_ASSERT_TRUE(PresetPoolRegistry::matchPrefixToken("AR High: Strobe", "AR High"));
+  TEST_ASSERT_TRUE(PresetPoolRegistry::matchPrefixToken("AR High Strobe", "AR High"));
+  TEST_ASSERT_TRUE(PresetPoolRegistry::matchPrefixToken("AR High - Strobe", "AR High"));
+  TEST_ASSERT_TRUE(PresetPoolRegistry::matchPrefixToken("  ar low - chill", "AR Low"));
+  TEST_ASSERT_FALSE(PresetPoolRegistry::matchPrefixToken("AR Higher", "AR High"));
+  TEST_ASSERT_FALSE(PresetPoolRegistry::matchPrefixToken("Ambience", "Ambient"));
+  TEST_ASSERT_FALSE(PresetPoolRegistry::matchPrefixToken("Colors: Red & Blue", "AR Mid"));
+
+  const char* presetsJson =
+    "{\"0\":{},"
+    "\"1\":{\"n\":\"Ambient: Loop\",\"playlist\":{\"ps\":[10,11]}},"
+    "\"2\":{\"on\":true,\"seg\":[{\"id\":0,\"n\":\"AR Max Segment\"}],\"n\":\"AR Low - Breathe\"},"
+    "\"3\":{\"seg\":[{\"id\":0,\"n\":\"Sideboard\"}],\"n\":\"AR Mid Sparkle\"},"
+    "\"4\":{\"n\":\"AR High: Strobe\"},"
+    "\"5\":{\"n\":\"AR Max: Drop \\\"Laser\\\"\"},"
+    "\"6\":{\"on\":true,\"bri\":200},"
+    "\"7\":{}}";
+
+  PresetPoolRegistry registry;
+  PresetScanParser parser;
+  parser.reset(registry);
+
+  // Feed in odd 13-byte chunks to verify streaming boundaries
+  size_t totalLen = strlen(presetsJson);
+  for (size_t pos = 0; pos < totalLen; pos += 13) {
+    size_t chunk = (pos + 13 <= totalLen) ? 13 : (totalLen - pos);
+    parser.feed(presetsJson + pos, chunk, registry);
+  }
+  parser.finish(registry);
+
+  TEST_ASSERT_TRUE(registry.isScanned());
+  TEST_ASSERT_FALSE(registry.exists(0));
+  TEST_ASSERT_TRUE(registry.exists(1));
+  TEST_ASSERT_TRUE(registry.exists(2));
+  TEST_ASSERT_TRUE(registry.exists(3));
+  TEST_ASSERT_TRUE(registry.exists(4));
+  TEST_ASSERT_TRUE(registry.exists(5));
+  TEST_ASSERT_TRUE(registry.exists(6));
+  TEST_ASSERT_FALSE(registry.exists(7));
+
+  TEST_ASSERT_EQUAL_UINT32(1, registry.getPoolCount(AutomationSlot::AMBIENT));
+  TEST_ASSERT_EQUAL_UINT8(1, registry.getPoolPreset(AutomationSlot::AMBIENT, 0));
+
+  TEST_ASSERT_EQUAL_UINT32(1, registry.getPoolCount(AutomationSlot::AR_LOW));
+  TEST_ASSERT_EQUAL_UINT8(2, registry.getPoolPreset(AutomationSlot::AR_LOW, 0));
+
+  TEST_ASSERT_EQUAL_UINT32(1, registry.getPoolCount(AutomationSlot::AR_MID));
+  TEST_ASSERT_EQUAL_UINT8(3, registry.getPoolPreset(AutomationSlot::AR_MID, 0));
+
+  TEST_ASSERT_EQUAL_UINT32(1, registry.getPoolCount(AutomationSlot::AR_HIGH));
+  TEST_ASSERT_EQUAL_UINT8(4, registry.getPoolPreset(AutomationSlot::AR_HIGH, 0));
+
+  // Verify nested segment "n":"AR Max Segment" did NOT pollute AR_MAX pool
+  TEST_ASSERT_EQUAL_UINT32(1, registry.getPoolCount(AutomationSlot::AR_MAX));
+  TEST_ASSERT_EQUAL_UINT8(5, registry.getPoolPreset(AutomationSlot::AR_MAX, 0));
+}
+
+void test_auto_preset_mapping_fallback_and_overrides(void) {
+  TEST_ASSERT_EQUAL_UINT8(AutomationSlot::AMBIENT, AutoPresetController::mapClassifierToSlot(AudioSemanticState::SILENCE, MusicPhrase::UNKNOWN));
+  TEST_ASSERT_EQUAL_UINT8(AutomationSlot::AMBIENT, AutoPresetController::mapClassifierToSlot(AudioSemanticState::AMBIENT_NOISE, MusicPhrase::UNKNOWN));
+  TEST_ASSERT_EQUAL_UINT8(AutomationSlot::AR_LOW,  AutoPresetController::mapClassifierToSlot(AudioSemanticState::MUSIC, MusicPhrase::BREAKDOWN));
+  TEST_ASSERT_EQUAL_UINT8(AutomationSlot::AR_LOW,  AutoPresetController::mapClassifierToSlot(AudioSemanticState::MUSIC, MusicPhrase::INTRO));
+  TEST_ASSERT_EQUAL_UINT8(AutomationSlot::AR_LOW,  AutoPresetController::mapClassifierToSlot(AudioSemanticState::MUSIC, MusicPhrase::OUTRO));
+  TEST_ASSERT_EQUAL_UINT8(AutomationSlot::AR_MID,  AutoPresetController::mapClassifierToSlot(AudioSemanticState::MUSIC, MusicPhrase::VERSE));
+  TEST_ASSERT_EQUAL_UINT8(AutomationSlot::AR_HIGH, AutoPresetController::mapClassifierToSlot(AudioSemanticState::MUSIC, MusicPhrase::BUILDUP));
+  TEST_ASSERT_EQUAL_UINT8(AutomationSlot::AR_MAX,  AutoPresetController::mapClassifierToSlot(AudioSemanticState::MUSIC, MusicPhrase::CHORUS));
+
+  PresetPoolRegistry registry;
+  registry.registerPreset(2, "AR Low Pulse");
+  registry.registerPreset(3, "AR Mid Wave");
+  registry.registerPreset(6, "Unnamed Override Preset");
+  registry.markScanned();
+
+  AutoPresetConfig cfg;
+  cfg.enabled = true;
+  AutoPresetController controller(cfg);
+
+  // Empty AR_MAX & AR_HIGH must fall back to nearest AR pool (AR_MID = 3)
+  AutomationSlot resolved = AutomationSlot::AMBIENT;
+  TEST_ASSERT_EQUAL_UINT8(3, controller.resolvePresetForSlot(AutomationSlot::AR_MAX, registry, 0, 0, &resolved));
+  TEST_ASSERT_EQUAL_UINT8(AutomationSlot::AR_MID, resolved);
+
+  // Empty AMBIENT must NOT fall back to AR_* pools
+  TEST_ASSERT_EQUAL_UINT8(0, controller.resolvePresetForSlot(AutomationSlot::AMBIENT, registry, 0, 0, &resolved));
+
+  // Explicit override takes precedence when valid
+  cfg.presetOverrides[static_cast<size_t>(AutomationSlot::AR_MAX)] = 6;
+  controller.setConfig(cfg);
+  TEST_ASSERT_EQUAL_UINT8(6, controller.resolvePresetForSlot(AutomationSlot::AR_MAX, registry, 0, 0, &resolved));
+  TEST_ASSERT_EQUAL_UINT8(AutomationSlot::AR_MAX, resolved);
+
+  // Missing override ID (99) is ignored gracefully and falls back without triggering WLED errors
+  cfg.presetOverrides[static_cast<size_t>(AutomationSlot::AR_MAX)] = 99;
+  controller.setConfig(cfg);
+  TEST_ASSERT_EQUAL_UINT8(3, controller.resolvePresetForSlot(AutomationSlot::AR_MAX, registry, 0, 0, &resolved));
+  TEST_ASSERT_EQUAL_UINT8(AutomationSlot::AR_MID, resolved);
+}
+
+void test_auto_preset_strict_cooldown_and_manual_override_hold(void) {
+  PresetPoolRegistry registry;
+  registry.registerPreset(1, "Ambient: Warm");
+  registry.registerPreset(2, "AR Low: Chill");
+  registry.registerPreset(3, "AR Mid: Groove");
+  registry.registerPreset(4, "AR High: Riser");
+  registry.registerPreset(10, "AR Max: Drop 1");
+  registry.registerPreset(11, "AR Max: Drop 2");
+  registry.markScanned();
+
+  AutoPresetConfig cfg;
+  cfg.enabled = true;
+  cfg.cooldownSec = 15;
+  cfg.manualOverrideHold = true;
+  AutoPresetController controller(cfg);
+
+  // 1. First switch at t=1000ms (Chorus -> AR Max) fires immediately
+  uint8_t p1 = controller.update(1000, true, AudioSemanticState::MUSIC, MusicPhrase::CHORUS, registry, 1, -1, false, 0);
+  TEST_ASSERT_TRUE(p1 == 10 || p1 == 11);
+
+  // 2. Strip OFF pauses switching even if phrase changes after cooldown
+  uint8_t pOff = controller.update(20000, true, AudioSemanticState::MUSIC, MusicPhrase::VERSE, registry, p1, -1, true, 0);
+  TEST_ASSERT_EQUAL_UINT8(0, pOff);
+
+  // 3. Phrase changes to VERSE at t=5000ms (4s < 15s cooldown) -> suppressed
+  uint8_t pCool1 = controller.update(5000, true, AudioSemanticState::MUSIC, MusicPhrase::VERSE, registry, p1, -1, false, 0);
+  TEST_ASSERT_EQUAL_UINT8(0, pCool1);
+
+  // 4. Phrase escalates to BUILDUP at t=12000ms (11s < 15s cooldown) -> still suppressed
+  uint8_t pCool2 = controller.update(12000, true, AudioSemanticState::MUSIC, MusicPhrase::BUILDUP, registry, p1, -1, false, 0);
+  TEST_ASSERT_EQUAL_UINT8(0, pCool2);
+
+  // 5. At t=16000ms (15s elapsed), pending target (AR High = 4) applies
+  uint8_t p2 = controller.update(16000, true, AudioSemanticState::MUSIC, MusicPhrase::BUILDUP, registry, p1, -1, false, 0);
+  TEST_ASSERT_EQUAL_UINT8(4, p2);
+
+  // 6. Manual user interaction engages override hold
+  controller.onManualStateChange();
+  TEST_ASSERT_TRUE(controller.isManualOverrideActive());
+
+  // Even after cooldown expires, chorus & ambient noise remain paused while manual override is active
+  TEST_ASSERT_EQUAL_UINT8(0, controller.update(40000, true, AudioSemanticState::MUSIC, MusicPhrase::CHORUS, registry, 20, -1, false, 0));
+  TEST_ASSERT_EQUAL_UINT8(0, controller.update(45000, true, AudioSemanticState::AMBIENT_NOISE, MusicPhrase::UNKNOWN, registry, 20, -1, false, 0));
+  TEST_ASSERT_TRUE(controller.isManualOverrideActive());
+
+  // 7. Returning to SILENCE clears manual override and switches back to Ambient (1)
+  uint8_t pAmbient = controller.update(50000, true, AudioSemanticState::SILENCE, MusicPhrase::UNKNOWN, registry, 20, -1, false, 0);
+  TEST_ASSERT_FALSE(controller.isManualOverrideActive());
+  TEST_ASSERT_EQUAL_UINT8(1, pAmbient);
+
+  // 8. Re-entering Chorus after cooldown avoids repeating p1 if multiple presets exist in AR_MAX
+  uint8_t pNextMax = controller.update(70000, true, AudioSemanticState::MUSIC, MusicPhrase::CHORUS, registry, 1, -1, false, 0);
+  TEST_ASSERT_TRUE(pNextMax == 10 || pNextMax == 11);
+  TEST_ASSERT_TRUE(pNextMax != p1);
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_initial_state_is_quiet_and_silence);
@@ -1199,5 +1357,8 @@ int main(int argc, char **argv) {
   RUN_TEST(test_edm_macro_structure_phrase_progression_and_anti_churn);
   RUN_TEST(test_chorus_to_breakdown_does_not_flip_to_outro_one_second_later);
   RUN_TEST(test_clipping_detection_ignores_single_spike_and_triggers_on_repeated_or_constant);
+  RUN_TEST(test_auto_preset_prefix_matching_and_streaming_json_scan);
+  RUN_TEST(test_auto_preset_mapping_fallback_and_overrides);
+  RUN_TEST(test_auto_preset_strict_cooldown_and_manual_override_hold);
   return UNITY_END();
 }

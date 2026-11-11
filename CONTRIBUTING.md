@@ -9,6 +9,7 @@ This usermod is divided into distinct, decoupled components:
 - `src/audio_frame.h`: Lightweight data struct representing an acoustic frame.
 - `src/ar_source.{h,cpp}`: Driver reading raw metrics and frequency bands from WLED's AudioReactive usermod.
 - `src/classifier.{h,cpp}`: Pure C++ state machines (presence, noise floor histogram, beat regularity, phrasing). **Must remain free of platform/WLED includes** to enable native host testing.
+- `src/auto_preset_controller.{h,cpp}`: Pure C++17 streaming `/presets.json` scanner and standalone auto-reactive preset selection controller. **Must remain free of platform/WLED includes**.
 - `src/ha_discovery.{h,cpp}`: Home Assistant MQTT discovery and real-time state telemetry generation using ArduinoJson.
 - `src/usermod_audio_classifier.{h,cpp}`: WLED Usermod V2 hooks and web configuration.
 
