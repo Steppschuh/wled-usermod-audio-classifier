@@ -90,11 +90,43 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git fetch origin "${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
+          git fetch origin "${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}" --tags
 
-          COMMIT_COUNT=$(git rev-list --count "origin/${TARGET_BRANCH}..HEAD")
+          # Resolve the latest non-prerelease tagged release reachable on target_branch
+          BASE_REF=""
+          RELEASE_TAGS=$(gh release list --repo "${REPOSITORY}" --exclude-drafts --exclude-pre-releases --limit 25 --json tagName --jq '.[].tagName' 2>/dev/null || true)
+          if [[ -n "${RELEASE_TAGS}" ]]; then
+            while IFS= read -r tag; do
+              [[ -z "${tag}" ]] && continue
+              if git rev-parse --verify "refs/tags/${tag}" >/dev/null 2>&1 && \
+                 git merge-base --is-ancestor "refs/tags/${tag}" "origin/${TARGET_BRANCH}" >/dev/null 2>&1; then
+                BASE_REF="${tag}"
+                break
+              fi
+            done <<< "${RELEASE_TAGS}"
+          fi
+
+          if [[ -z "${BASE_REF}" ]]; then
+            BASE_REF=$(git describe --tags --abbrev=0 \
+              --exclude='*-dev.*' \
+              --exclude='*-rc.*' \
+              --exclude='*-alpha.*' \
+              --exclude='*-beta.*' \
+              "origin/${TARGET_BRANCH}" 2>/dev/null || true)
+          fi
+
+          if [[ -n "${BASE_REF}" ]]; then
+            COMPARE_REF="refs/tags/${BASE_REF}"
+            BASE_REF_TYPE="release_tag"
+          else
+            COMPARE_REF="origin/${TARGET_BRANCH}"
+            BASE_REF="${TARGET_BRANCH}"
+            BASE_REF_TYPE="branch"
+          fi
+
+          COMMIT_COUNT=$(git rev-list --count "${COMPARE_REF}..HEAD")
           if [[ "${COMMIT_COUNT}" -eq 0 ]]; then
-            echo "::notice::No commits on ${SOURCE_BRANCH} ahead of ${TARGET_BRANCH}. Skipping release PR."
+            echo "::notice::No commits on ${SOURCE_BRANCH} ahead of ${BASE_REF}. Skipping release PR."
             echo "has_changes=false" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
@@ -103,15 +135,18 @@ jobs:
 
           CURRENT_VERSION=$(jq -r '.version // "0.0.0"' library.json)
           RELEASE_DATE=$(date -u +%Y-%m-%d)
-          COMMITS=$(git log --pretty=format:'%h %s (%an)' "origin/${TARGET_BRANCH}..HEAD")
-          CHANGED_FILES=$(git diff --name-status "origin/${TARGET_BRANCH}...HEAD")
-          DIFF_STAT=$(git diff --stat "origin/${TARGET_BRANCH}...HEAD")
+          COMMITS=$(git log --pretty=format:'%h %s (%an)' "${COMPARE_REF}..HEAD")
+          CHANGED_FILES=$(git diff --name-status "${COMPARE_REF}...HEAD")
+          DIFF_STAT=$(git diff --stat "${COMPARE_REF}...HEAD")
           MERGED_PRS=$(gh pr list --repo "${REPOSITORY}" --state merged --limit 30 --json number,title,url,baseRefName,headRefName,mergedAt 2>/dev/null || echo "[]")
 
           mkdir -p .gemini
           jq -n \
             --arg source_branch "${SOURCE_BRANCH}" \
             --arg target_branch "${TARGET_BRANCH}" \
+            --arg base_ref "${BASE_REF}" \
+            --arg compare_ref "${COMPARE_REF}" \
+            --arg base_ref_type "${BASE_REF_TYPE}" \
             --arg current_version "${CURRENT_VERSION}" \
             --arg version_override "${VERSION_OVERRIDE}" \
             --arg release_date "${RELEASE_DATE}" \
@@ -124,11 +159,14 @@ jobs:
             '{
               source_branch: $source_branch,
               target_branch: $target_branch,
+              base_ref: $base_ref,
+              compare_ref: $compare_ref,
+              base_ref_type: $base_ref_type,
               current_version: $current_version,
               version_override: $version_override,
               release_date: $release_date,
               commit_count: $commit_count,
-              commits_since_target: $commits,
+              commits_since_base: $commits,
               changed_files: $changed_files,
               diff_stat: $diff_stat,
               repository: $repository,
