@@ -315,7 +315,7 @@ jobs:
 
           bump_type = str(data.get("bump_type") or "release").strip()
           rationale = str(data.get("rationale") or "").strip()
-          pr_title = str(data.get("pr_title") or f"chore(release): v{new_version}").replace("\r", " ").replace("\n", " ").strip()
+          pr_title = f"Release {new_version}"
           pr_summary = str(data.get("pr_summary") or "").strip()
           release_date = os.environ["RELEASE_DATE"]
           source_branch = os.environ["SOURCE_BRANCH"]
@@ -370,7 +370,6 @@ jobs:
             f"- **Version Bump**: `{current_version}` → `{new_version}` ({bump_type})",
             f"- **Bump Rationale**: {rationale}",
             f"- **Diff Scope**: `{source_branch}` vs `{base_ref}`",
-            "- **Updated Files**: `library.json`, `src/ha_discovery.h`, `CHANGELOG.md`",
             "",
             "### Changelog",
             changelog_sections,

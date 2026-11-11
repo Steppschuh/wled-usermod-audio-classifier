@@ -34,7 +34,7 @@ Your task is to analyze unreleased changes on `source_branch` (typically `dev`) 
   "bump_type": "minor",
   "rationale": "One-sentence explanation of why this SemVer level was chosen.",
   "changelog_sections": "### Added\n- ...\n\n### Changed\n- ...",
-  "pr_title": "chore(release): v0.3.0",
+  "pr_title": "Release 0.3.0",
   "pr_summary": "2-3 sentence release summary for the PR description.",
   "skip_reason": ""
 }
