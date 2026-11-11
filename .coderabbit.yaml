@@ -11,8 +11,7 @@ reviews:
     enabled: true
     drafts: false
     base_branches:
-      - "main"
-      - "dev"
+      - ".*"
 
   path_filters:
     - "!.pio/**"
@@ -35,7 +34,7 @@ reviews:
     - path: "src/ha_discovery.*"
       instructions: |
         - Must remain compatible with both ArduinoJson v6 (WLED ESP32) and v7 via `#if ARDUINOJSON_VERSION_MAJOR >= 7`.
-        - Ensure MQTT discovery JSON documents have sufficient capacity (e.g. `DynamicJsonDocument(1024)`) and keep `removeDiscovery()` in sync with published entities.
+        - Ensure MQTT discovery JSON documents have sufficient capacity (e.g. using `DynamicJsonDocument` with explicit capacity for v6, or `JsonDocument` for v7) and keep `removeDiscovery()` in sync with published entities.
     - path: "src/usermod_audio_classifier.*"
       instructions: |
         - Must guard WLED/ESP32 code with `#ifdef ARDUINO_ARCH_ESP32` and MQTT hooks with `#ifndef WLED_DISABLE_MQTT`.
