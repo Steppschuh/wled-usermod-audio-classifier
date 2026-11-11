@@ -87,9 +87,6 @@ jobs:
         run: |-
           set -euo pipefail
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           git fetch origin "${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}" --tags
 
           # Resolve the latest non-prerelease tagged release reachable on target_branch
@@ -141,6 +138,8 @@ jobs:
           MERGED_PRS=$(gh pr list --repo "${REPOSITORY}" --state merged --limit 30 --json number,title,url,baseRefName,headRefName,mergedAt 2>/dev/null || echo "[]")
 
           mkdir -p .gemini
+          git diff "${COMPARE_REF}...HEAD" -- . ':(exclude)test/fixtures/*.json' > .gemini/release-diff.patch || true
+
           jq -n \
             --arg source_branch "${SOURCE_BRANCH}" \
             --arg target_branch "${TARGET_BRANCH}" \
@@ -154,6 +153,7 @@ jobs:
             --arg commits "${COMMITS}" \
             --arg changed_files "${CHANGED_FILES}" \
             --arg diff_stat "${DIFF_STAT}" \
+            --arg diff_patch_path ".gemini/release-diff.patch" \
             --arg repository "${REPOSITORY}" \
             --argjson merged_prs "${MERGED_PRS}" \
             '{
@@ -169,9 +169,10 @@ jobs:
               commits_since_base: $commits,
               changed_files: $changed_files,
               diff_stat: $diff_stat,
+              diff_patch_path: $diff_patch_path,
               repository: $repository,
               merged_prs: $merged_prs
-            }' > .gemini/context.json
+            }' > .gemini/release-context.json
 
       - name: 'Run Gemini CLI'
         id: 'run_gemini'
@@ -181,7 +182,6 @@ jobs:
         env:
           GEMINI_CLI_TRUST_WORKSPACE: 'true'
           GITHUB_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
-          GH_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
         with:
           gcp_location: '${{ vars.GOOGLE_CLOUD_LOCATION }}'
           gcp_project_id: '${{ vars.GOOGLE_CLOUD_PROJECT }}'
@@ -218,6 +218,9 @@ jobs:
                     "ghcr.io/github/github-mcp-server:v0.27.0"
                   ],
                   "includeTools": [
+                    "list_branches",
+                    "create_branch",
+                    "push_files",
                     "create_pull_request",
                     "pull_request_read",
                     "list_pull_requests",
@@ -234,6 +237,15 @@ jobs:
                     "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
                   }
                 }
+              },
+              "tools": {
+                "core": [
+                  "read_file"
+                ]
               }
             }
           prompt: '/gemini-release'
+
+      - name: 'Cleanup Temporary Release Context'
+        if: always()
+        run: rm -f .gemini/release-context.json .gemini/release-diff.patch
