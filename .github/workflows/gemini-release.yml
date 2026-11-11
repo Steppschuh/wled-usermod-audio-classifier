@@ -129,9 +129,13 @@ jobs:
           fi
 
           echo "has_changes=true" >> "${GITHUB_OUTPUT}"
+          echo "base_ref=${BASE_REF}" >> "${GITHUB_OUTPUT}"
 
           CURRENT_VERSION=$(jq -r '.version // "0.0.0"' library.json)
           RELEASE_DATE=$(date -u +%Y-%m-%d)
+          echo "current_version=${CURRENT_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "release_date=${RELEASE_DATE}" >> "${GITHUB_OUTPUT}"
+
           COMMITS=$(git log --pretty=format:'%h %s (%an)' "${COMPARE_REF}..HEAD")
           CHANGED_FILES=$(git diff --name-status "${COMPARE_REF}...HEAD")
           DIFF_STAT=$(git diff --stat "${COMPARE_REF}...HEAD")
@@ -199,7 +203,7 @@ jobs:
           settings: |-
             {
               "model": {
-                "maxSessionTurns": 35
+                "maxSessionTurns": 25
               },
               "telemetry": {
                 "enabled": true,
@@ -218,10 +222,6 @@ jobs:
                     "ghcr.io/github/github-mcp-server:v0.27.0"
                   ],
                   "includeTools": [
-                    "list_branches",
-                    "create_branch",
-                    "push_files",
-                    "create_pull_request",
                     "pull_request_read",
                     "list_pull_requests",
                     "search_pull_requests",
@@ -246,6 +246,182 @@ jobs:
             }
           prompt: '/gemini-release'
 
+      - name: 'Apply Release Changes, Push Branch & Open PR'
+        if: |-
+          ${{ steps.prep.outputs.has_changes == 'true' }}
+        env:
+          GH_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
+          GEMINI_SUMMARY: '${{ steps.run_gemini.outputs.summary }}'
+          SOURCE_BRANCH: '${{ inputs.source_branch || ''dev'' }}'
+          TARGET_BRANCH: '${{ inputs.target_branch || ''main'' }}'
+          BASE_REF: '${{ steps.prep.outputs.base_ref }}'
+          CURRENT_VERSION: '${{ steps.prep.outputs.current_version }}'
+          RELEASE_DATE: '${{ steps.prep.outputs.release_date }}'
+          REPOSITORY: '${{ github.repository }}'
+        run: |-
+          set -euo pipefail
+
+          echo "=== Gemini CLI Output ==="
+          printf '%s\n' "${GEMINI_SUMMARY}"
+          echo "========================="
+
+          rm -f .gemini/release-context.json .gemini/release-diff.patch
+
+          python3 - <<'PYEOF'
+          import json
+          import os
+          import re
+          import sys
+
+          raw = os.environ.get("GEMINI_SUMMARY", "").strip()
+          if not raw:
+            print("::error::Gemini CLI returned an empty summary.", file=sys.stderr)
+            sys.exit(1)
+
+          start = raw.find("{")
+          end = raw.rfind("}")
+          if start == -1 or end == -1 or end <= start:
+            print("::error::Gemini CLI summary did not contain a valid JSON object.", file=sys.stderr)
+            sys.exit(1)
+
+          try:
+            data = json.loads(raw[start : end + 1])
+          except json.JSONDecodeError as exc:
+            print(f"::error::Failed to parse Gemini CLI JSON: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+          skip_reason = str(data.get("skip_reason") or "").strip()
+          if skip_reason:
+            print(f"::notice::Release skipped by Gemini CLI: {skip_reason}")
+            with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
+              fh.write("RELEASE_SKIPPED=true\n")
+            sys.exit(0)
+
+          new_version = str(data.get("new_version") or "").strip().lstrip("v")
+          if not re.match(r"^[0-9]+\.[0-9]+\.[0-9]+$", new_version):
+            print(f"::error::Invalid SemVer version from Gemini: {new_version!r}", file=sys.stderr)
+            sys.exit(1)
+
+          current_version = os.environ["CURRENT_VERSION"].strip().lstrip("v")
+          if new_version == current_version:
+            print(f"::error::New version ({new_version}) matches current version ({current_version}).", file=sys.stderr)
+            sys.exit(1)
+
+          changelog_sections = str(data.get("changelog_sections") or "").strip()
+          if not changelog_sections:
+            print("::error::Gemini CLI returned empty changelog_sections.", file=sys.stderr)
+            sys.exit(1)
+
+          bump_type = str(data.get("bump_type") or "release").strip()
+          rationale = str(data.get("rationale") or "").strip()
+          pr_title = str(data.get("pr_title") or f"chore(release): v{new_version}").replace("\r", " ").replace("\n", " ").strip()
+          pr_summary = str(data.get("pr_summary") or "").strip()
+          release_date = os.environ["RELEASE_DATE"]
+          source_branch = os.environ["SOURCE_BRANCH"]
+          base_ref = os.environ["BASE_REF"]
+          target_branch = os.environ["TARGET_BRANCH"]
+
+          # 1. Update library.json
+          with open("library.json", "r", encoding="utf-8") as fh:
+            lib = json.load(fh)
+          lib["version"] = new_version
+          with open("library.json", "w", encoding="utf-8") as fh:
+            json.dump(lib, fh, indent=2)
+            fh.write("\n")
+
+          # 2. Update src/ha_discovery.h
+          with open("src/ha_discovery.h", "r", encoding="utf-8") as fh:
+            ha_hdr = fh.read()
+          updated_hdr, count = re.subn(
+            r'(#define\s+USERMOD_AUDIO_CLASSIFIER_VERSION\s+)"[^"]+"',
+            rf'\1"{new_version}"',
+            ha_hdr,
+          )
+          if count != 1:
+            print("::error::Failed to update USERMOD_AUDIO_CLASSIFIER_VERSION in src/ha_discovery.h", file=sys.stderr)
+            sys.exit(1)
+          with open("src/ha_discovery.h", "w", encoding="utf-8") as fh:
+            fh.write(updated_hdr)
+
+          # 3. Update CHANGELOG.md
+          with open("CHANGELOG.md", "r", encoding="utf-8") as fh:
+            changelog = fh.read()
+          release_block = f"## [{new_version}] - {release_date}\n\n{changelog_sections}"
+          marker = "## [Unreleased]"
+          idx = changelog.find(marker)
+          if idx == -1:
+            print("::error::Could not find '## [Unreleased]' marker in CHANGELOG.md", file=sys.stderr)
+            sys.exit(1)
+          after_marker = idx + len(marker)
+          head = changelog[:after_marker]
+          tail = changelog[after_marker:].lstrip("\r\n")
+          updated_changelog = f"{head}\n\n{release_block}\n\n{tail}"
+          with open("CHANGELOG.md", "w", encoding="utf-8") as fh:
+            fh.write(updated_changelog)
+
+          pr_body_lines = [
+            f"## Release v{new_version}",
+            "",
+          ]
+          if pr_summary:
+            pr_body_lines.extend([pr_summary, ""])
+          pr_body_lines.extend([
+            f"- **Version Bump**: `{current_version}` → `{new_version}` ({bump_type})",
+            f"- **Bump Rationale**: {rationale}",
+            f"- **Diff Scope**: `{source_branch}` vs `{base_ref}`",
+            "- **Updated Files**: `library.json`, `src/ha_discovery.h`, `CHANGELOG.md`",
+            "",
+            "### Changelog",
+            changelog_sections,
+            "",
+            "---",
+            f"Merging this PR into `{target_branch}` will automatically trigger `.github/workflows/sync-wled-releases.yml` to build and publish the GitHub release.",
+          ])
+          pr_body = "\n".join(pr_body_lines) + "\n"
+          with open("/tmp/release-pr-body.md", "w", encoding="utf-8") as fh:
+            fh.write(pr_body)
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
+            fh.write(f"NEW_VERSION={new_version}\n")
+            fh.write(f"PR_TITLE={pr_title}\n")
+            fh.write("RELEASE_SKIPPED=false\n")
+          PYEOF
+
+          if [[ "${RELEASE_SKIPPED:-true}" == "true" ]]; then
+            exit 0
+          fi
+
+          RELEASE_BRANCH="release/${NEW_VERSION}"
+          if git ls-remote --exit-code --heads origin "${RELEASE_BRANCH}" >/dev/null 2>&1; then
+            echo "::error::Remote branch ${RELEASE_BRANCH} already exists. Delete it or bump to a different version."
+            exit 1
+          fi
+
+          jq empty library.json
+          git status --short
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "${RELEASE_BRANCH}"
+          git add library.json src/ha_discovery.h CHANGELOG.md
+          git commit -m "chore(release): prepare v${NEW_VERSION}"
+          git push -u origin "${RELEASE_BRANCH}"
+
+          PR_URL=$(gh pr create \
+            --repo "${REPOSITORY}" \
+            --base "${TARGET_BRANCH}" \
+            --head "${RELEASE_BRANCH}" \
+            --title "${PR_TITLE}" \
+            --body-file /tmp/release-pr-body.md)
+
+          echo "Created release PR: ${PR_URL}"
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            echo "### Release PR Created" >> "${GITHUB_STEP_SUMMARY}"
+            echo "- Branch: \`${RELEASE_BRANCH}\` → \`${TARGET_BRANCH}\`" >> "${GITHUB_STEP_SUMMARY}"
+            echo "- PR: ${PR_URL}" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
       - name: 'Cleanup Temporary Release Context'
         if: always()
-        run: rm -f .gemini/release-context.json .gemini/release-diff.patch
+        run: rm -f .gemini/release-context.json .gemini/release-diff.patch /tmp/release-pr-body.md
