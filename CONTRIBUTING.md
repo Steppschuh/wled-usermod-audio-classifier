@@ -77,4 +77,24 @@ See [AGENTS.md](AGENTS.md) for detailed assertion schemas and options.
 3. Update documentation and `CHANGELOG.md` when introducing new features or modifying configuration options.
 4. For AI-assisted workflows, OTA flashing recipes, and architecture invariants, see [AGENTS.md](AGENTS.md).
 
+## AI Tooling & Issue-to-Release Workflow
+
+### Local AI Assistants
+Contributors using local AI coding agents should instruct them to read [AGENTS.md](AGENTS.md), which documents all architectural boundaries, behavioral invariants, and verification commands.
+
+### End-to-End Issue & Pull Request Flow
+1. **Open an Issue**: A contributor or user files a bug report or feature request.
+2. **Specification (`@gemini-cli /spec`)**: A maintainer comments `@gemini-cli /spec` on the issue to generate a structured functional specification and open questions.
+3. **Implementation Plan (`@gemini-cli /plan`)**: Once the specification is agreed upon, a maintainer comments `@gemini-cli /plan` to propose a concrete implementation plan.
+4. **Implementation & PR (`@gemini-cli /approve`)**: After approving the plan, a maintainer comments `@gemini-cli /approve` so Gemini CLI implements the changes and opens a pull request.
+5. **Automated PR Reviews**: Pull requests targeting `main` or `dev` are built & tested via CI ([`.github/workflows/build-firmware.yml`](.github/workflows/build-firmware.yml)), and PRs are automatically reviewed by two AI reviewers (ignoring `test/fixtures/**`, `media/**`, `.pio/**`, and binaries):
+   - **Gemini Code Assist** ([`.gemini/config.yaml`](.gemini/config.yaml), [`.gemini/styleguide.md`](.gemini/styleguide.md)): Posts an automated summary and review on PR open (including drafts). Re-trigger manually with `/gemini review` or `/gemini summary`.
+   - **CodeRabbit** ([`.coderabbit.yaml`](.coderabbit.yaml)): Reviews non-draft PRs (`chill` profile) targeting any branch with path-specific rules. Re-trigger manually with `@coderabbitai review` or `@coderabbitai full review`.
+6. **Addressing Review Feedback**: Contributors or maintainers can push fixes directly or invoke `@gemini-cli <feedback>` → `@gemini-cli /approve` on the PR thread.
+7. **Releases**:
+   - **Preview Release (`dev`)**: Merging into `dev` triggers [`.github/workflows/preview-release.yml`](.github/workflows/preview-release.yml), compiling OTA/factory binaries and publishing a GitHub prerelease.
+   - **Stable Release (`main`)**: Merging into `main` triggers [`.github/workflows/sync-wled-releases.yml`](.github/workflows/sync-wled-releases.yml), publishing a GitHub release whenever `library.json` version or the latest upstream WLED release introduces a new `wled-<wled_tag>-mod-<usermod_tag>` pair.
+
+> **Maintainer Access & Secret Requirement**: `@gemini-cli` comment invocations are restricted to repository `OWNER`, `MEMBER`, and `COLLABORATOR` accounts via [`.github/workflows/gemini-dispatch.yml`](.github/workflows/gemini-dispatch.yml) and require `GEMINI_API_KEY` to be configured in repository Actions secrets.
+
 

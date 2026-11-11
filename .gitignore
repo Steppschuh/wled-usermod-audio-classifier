@@ -23,3 +23,8 @@ __pycache__/
 
 # Audio recordings (binary audio captures)
 test/fixtures/*.wav
+
+# Gemini CLI runtime artifacts
+.gemini/context.json
+.gemini/telemetry.log
+gha-creds-*.json
