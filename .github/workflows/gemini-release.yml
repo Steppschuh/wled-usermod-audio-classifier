@@ -271,6 +271,7 @@ jobs:
           import json
           import os
           import re
+          import shlex
           import sys
 
           raw = os.environ.get("GEMINI_SUMMARY", "").strip()
@@ -293,7 +294,7 @@ jobs:
           skip_reason = str(data.get("skip_reason") or "").strip()
           if skip_reason:
             print(f"::notice::Release skipped by Gemini CLI: {skip_reason}")
-            with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
+            with open("/tmp/release.env", "w", encoding="utf-8") as fh:
               fh.write("RELEASE_SKIPPED=true\n")
             sys.exit(0)
 
@@ -381,12 +382,13 @@ jobs:
           with open("/tmp/release-pr-body.md", "w", encoding="utf-8") as fh:
             fh.write(pr_body)
 
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
-            fh.write(f"NEW_VERSION={new_version}\n")
-            fh.write(f"PR_TITLE={pr_title}\n")
+          with open("/tmp/release.env", "w", encoding="utf-8") as fh:
+            fh.write(f"NEW_VERSION={shlex.quote(new_version)}\n")
+            fh.write(f"PR_TITLE={shlex.quote(pr_title)}\n")
             fh.write("RELEASE_SKIPPED=false\n")
           PYEOF
 
+          source /tmp/release.env
           if [[ "${RELEASE_SKIPPED:-true}" == "true" ]]; then
             exit 0
           fi
@@ -424,4 +426,4 @@ jobs:
 
       - name: 'Cleanup Temporary Release Context'
         if: always()
-        run: rm -f .gemini/release-context.json .gemini/release-diff.patch /tmp/release-pr-body.md
+        run: rm -f .gemini/release-context.json .gemini/release-diff.patch /tmp/release-pr-body.md /tmp/release.env
