@@ -21,9 +21,12 @@ jobs:
       target_commitish: ${{ steps.meta.outputs.target_commitish }}
       branch_name: ${{ steps.meta.outputs.branch_name }}
       branch_slug: ${{ steps.meta.outputs.branch_slug }}
+      changes_notes: ${{ steps.meta.outputs.changes_notes }}
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Resolve Preview Version & Tag
         id: meta
@@ -36,6 +39,41 @@ jobs:
           BRANCH_SLUG=$(printf '%s' "${BRANCH_NAME}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g')
           RELEASE_TAG="wled-${WLED_TAG}-mod-${USERMOD_TAG}-${BRANCH_SLUG}.${GITHUB_RUN_NUMBER}"
 
+          git fetch origin main:refs/remotes/origin/main --tags 2>/dev/null || git fetch origin --tags 2>/dev/null || true
+
+          BASE_TAG=""
+          RELEASE_TAGS=$(gh release list --repo "${GITHUB_REPOSITORY}" --exclude-drafts --exclude-pre-releases --limit 25 --json tagName --jq '.[].tagName' 2>/dev/null || true)
+          if [[ -n "${RELEASE_TAGS}" ]]; then
+            while IFS= read -r tag; do
+              [[ -z "${tag}" ]] && continue
+              if git rev-parse --verify "refs/tags/${tag}" >/dev/null 2>&1 && \
+                 git merge-base --is-ancestor "refs/tags/${tag}" "HEAD" >/dev/null 2>&1; then
+                BASE_TAG="${tag}"
+                break
+              fi
+            done <<< "${RELEASE_TAGS}"
+          fi
+
+          if [[ -z "${BASE_TAG}" ]]; then
+            BASE_TAG=$(git describe --tags --abbrev=0 \
+              --exclude='*-dev.*' \
+              --exclude='*-rc.*' \
+              --exclude='*-alpha.*' \
+              --exclude='*-beta.*' \
+              HEAD 2>/dev/null || true)
+          fi
+
+          CHANGES_NOTES=""
+          if [[ -n "${BASE_TAG}" ]]; then
+            COMMITS=$(git log --no-merges --max-count=30 --pretty=format:'- %s (%h)' "refs/tags/${BASE_TAG}..HEAD" 2>/dev/null || true)
+            if [[ -n "${COMMITS}" ]]; then
+              CHANGES_NOTES=$(printf '### Changes Since %s\n%s\n\n**Full Changelog**: https://github.com/%s/compare/%s...%s' \
+                "${BASE_TAG}" "${COMMITS}" "${GITHUB_REPOSITORY}" "${BASE_TAG}" "${SHORT_SHA}")
+            else
+              CHANGES_NOTES="No commits ahead of \`${BASE_TAG}\`."
+            fi
+          fi
+
           echo "wled_tag=${WLED_TAG}" >> "$GITHUB_OUTPUT"
           echo "usermod_tag=${USERMOD_TAG}" >> "$GITHUB_OUTPUT"
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
@@ -43,6 +81,13 @@ jobs:
           echo "branch_name=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"
           echo "branch_slug=${BRANCH_SLUG}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+
+          DELIM="CHANGES_$(date +%s%N)_$$"
+          {
+            echo "changes_notes<<${DELIM}"
+            printf '%s\n' "${CHANGES_NOTES}"
+            echo "${DELIM}"
+          } >> "$GITHUB_OUTPUT"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -60,7 +105,10 @@ jobs:
 
         > [!WARNING]
         > This is a pre-release preview build from the `${{ needs.prepare-preview.outputs.branch_name }}` branch intended for testing.
+
+        ${{ needs.prepare-preview.outputs.changes_notes }}
       prerelease: true
+      generate_release_notes: false
     secrets: inherit
 
   cleanup-old-previews:

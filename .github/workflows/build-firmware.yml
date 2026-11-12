@@ -34,6 +34,11 @@ on:
         type: string
         required: false
         default: ''
+      generate_release_notes:
+        description: 'Auto-generate release notes via GitHub'
+        type: boolean
+        required: false
+        default: true
   workflow_call:
     inputs:
       wled_ref:
@@ -60,6 +65,10 @@ on:
         type: string
         required: false
         default: ''
+      generate_release_notes:
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: read
@@ -247,6 +256,7 @@ jobs:
           name: ${{ inputs.release_title || inputs.release_tag || github.ref_name }}
           body: ${{ inputs.release_body || '' }}
           prerelease: ${{ inputs.prerelease || false }}
+          generate_release_notes: ${{ inputs.generate_release_notes != false }}
           files: release_artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
