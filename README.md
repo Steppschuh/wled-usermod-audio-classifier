@@ -6,37 +6,61 @@
 [![Build Firmware](https://github.com/Steppschuh/wled-usermod-audio-classifier/actions/workflows/build-firmware.yml/badge.svg)](https://github.com/Steppschuh/wled-usermod-audio-classifier/actions/workflows/build-firmware.yml)
 [![License: EUPL-1.2](https://img.shields.io/badge/License-EUPL--1.2-blue.svg)](LICENSE)
 
-A [WLED](https://github.com/wled/WLED) usermod (v2) that turns your controller's microphone into an acoustic presence and music sensor for Home Assistant over MQTT.
+A [WLED](https://github.com/wled/WLED) usermod (v2) that brings **real-time on-device audio classification and musical intelligence** to your ESP32 controller.
 
-It taps into WLED's built-in `AudioReactive` stream in memory—with zero impact on LED frame rates—to classify room audio, track tempo (BPM), and detect song structure. Works with off-the-shelf microphone controllers (e.g. Gledopto GL-C-015WL-M, GL-C-310WL) and DIY ESP32 builds.
+It taps into WLED's built-in `AudioReactive` stream in memory—with minimal overhead—to analyze ambient sound, detect room presence, track tempo (BPM), and gauge dynamic acoustic energy and song structure. All analysis runs 100% locally on the device and can be used for:
+
+- **Autonomous on-device preset switching**: Automatically adapts WLED presets to match current energy levels and song progression without needing an external controller or home automation server.
+- **Home Assistant integration via MQTT**: Publishes rich acoustic sensors for advanced whole-home automations, dashboards, and presence detection.
+- **Both combined**: Drive dynamic lighting directly on the strip while simultaneously reporting state and telemetry to your smart home.
+
+Works with off-the-shelf microphone controllers (e.g. Gledopto GL-C-015WL-M, GL-C-310WL) and DIY ESP32 builds.
 
 ---
 
 ## Features
 
-- **MQTT Auto-Discovery**: Attaches all sensors and controls directly to your WLED device in Home Assistant without manual YAML.
-- **Zero-Overhead AudioReactive Coupling**: Reads FFT and volume data in memory (`getUMData`) without competing for I2S bus access.
+- **100% Local On-Device Intelligence**: Processes FFT audio frames in volatile ESP32 RAM with minimal overhead; no audio is ever recorded, stored, or streamed over the network.
+- **Low-Overhead AudioReactive Coupling**: Reads FFT and volume data directly in memory (`getUMData`) without competing for I2S bus access.
 - **Adaptive Noise Floor**: Tracks ambient room baseline via a 5-minute 10th-percentile filter, freezing during active sound to prevent baseline creep.
 - **Debounced Sound Presence**: Configurable on/off delays (1.2 s / 8.0 s) ignore transient noises (claps, door slams) and brief track pauses.
-- **Musical Phrase & Energy Tracking**: Identifies `Intro`, `Verse`, `Buildup`, `Chorus`, `Breakdown`, and `Outro` alongside a dynamic `0–100%` energy score.
+- **Musical Energy & Phrasing**: Tracks continuous musical energy (`0–100%`) alongside structural phrase detection (`Intro`, `Verse`, `Buildup`, `Chorus`, `Breakdown`, `Outro`).
 - **BPM & Beat Confidence**: Estimates tempo (`60–240 bpm`) with octave-jump rejection and holds lock across quiet breakdowns.
-- **Auto Switch Presets**: Autonomously switches WLED presets by energy and musical phrase using preset name prefixes (`Ambient`, `AR Low`, `AR Mid`, `AR High`, `AR Max`) or explicit preset IDs—no Home Assistant required.
-- **100% Local & Private**: Processes FFT data in volatile ESP32 RAM; no audio is ever recorded or streamed.
+- **Standalone Auto Switch Presets**: Autonomously switches WLED presets by energy and musical phrase using preset name prefixes (`Ambient`, `AR Low`, `AR Mid`, `AR High`, `AR Max`) or explicit preset IDs—completely independent of Home Assistant or an MQTT broker.
+- **MQTT Auto-Discovery**: Automatically exposes [10 sensor, switch, and diagnostic entities](#home-assistant-entities) directly to your WLED device in Home Assistant without manual YAML.
+- **Rich Automation Triggers & Conditions**: Every classified metric—presence, audio type, energy level, and BPM—can be leveraged directly as triggers or conditions in Home Assistant automations.
+
+---
+
+## Standalone Auto-Reactive Preset Switching
+
+For standalone setups without Home Assistant or an MQTT broker, the usermod can autonomously adapt your lighting to the room's acoustic vibe:
+
+1. **Organize your presets** in WLED using standard name prefixes corresponding to energy slots:
+   - `Ambient *` (e.g. `Ambient Warm Glow`): Used during silence or non-musical ambient sound.
+   - `AR Low *` (e.g. `AR Low Chill Breath`): Used during quiet song intros, outros, and breakdowns.
+   - `AR Mid *` (e.g. `AR Mid Smooth Waves`): Used during steady verses and moderate grooves.
+   - `AR High *` (e.g. `AR High Fast Chase`): Used during rising tension and buildups.
+   - `AR Max *` (e.g. `AR Max Strobe Impact`): Used during intense choruses and bass drops.
+2. **Enable Auto Switch Presets** under **Config > Usermods > AudioClassifier** (or toggle it via the Home Assistant switch entity or `/json/state` API).
+3. The controller automatically selects matching presets as the music evolves. It cycles through populated pools without immediate repeats, falls back gracefully to adjacent energy pools when a slot is unassigned, enforces a configurable dwell cooldown (default 15 s) to prevent frantic changes, and pauses automatically when you make manual lighting adjustments.
 
 ---
 
 ## Home Assistant Entities
 
-When MQTT is enabled, these entities are added to your WLED device in Home Assistant:
+When MQTT is enabled, the classifier automatically discovers entities under your WLED device in Home Assistant. These can be displayed on dashboards, recorded in long-term history, or used as **triggers** and **conditions** in your automations:
 
 ### Audio Detected
-Binary sensor (`sound` device class) that turns `on` during sustained sound and `off` when the room is quiet. Default delays require 1.2 s of continuous sound to trigger and 8.0 s of silence to clear, filtering out short noises like door slams.
+Binary sensor (`sound` device class) that turns `on` during sustained sound and `off` when the room is quiet. Default delays require 1.2 s of continuous sound to trigger and 8.0 s of silence to clear, filtering out short noises like door slams. Ideal as an automation **trigger** or **condition** for room occupancy and acoustic presence.
 
 ### Audio Type
 Contextual sensor that classifies the room into one of three states:
 - `Silence`: Sound level is at or below the ambient room baseline.
 - `Ambient Noise`: Sustained non-musical sound such as conversation, TV dialogue, fans, or kitchen activity.
 - `Music`: Rhythmic and harmonic sound with structural musical properties.
+
+Excellent for automation conditions to ensure party or dynamic lighting effects only engage when actual music is playing.
 
 ### Music Phrase
 Song structure classification based on tension-and-release electronic music arrangement:
@@ -58,33 +82,37 @@ Dynamic energy metric (`0%` to `100%`) mapped to distinct, non-overlapping windo
 - `80% – 95%`: Buildup (crescendo ramp escalating with riser volume and elapsed phrase duration).
 - `95% – 100%`: Chorus / drop (high-impact climax hitting 100% on bass drops).
 
+Can be used in numerical state conditions (e.g. `above: 75%`) or mapped to light brightness and animation speed.
+
 ### Music Beat Probability
 Confidence score from `0.0%` to `100.0%` indicating rhythm regularity based on low-frequency variance analysis (0% represents non-rhythmic noise or silence; 100% indicates a steady bass beat).
 
 ### BPM
-Detected musical tempo from `60` to `240 bpm` (`0` when music is not active). Rejects octave doubling and syncopated eighth notes, and holds steady through quiet breakdowns.
+Detected musical tempo from `60` to `240 bpm` (`0` when music is not active). Rejects octave doubling and syncopated eighth notes, and holds steady through quiet breakdowns. Useful as an automation condition or to synchronize external lighting effects to tempo.
 
 ### Audio Level RMS
-Diagnostic sensor reporting the continuous 1-second rolling RMS sound level from `0.0%` to `100.0%`. Updates every second for dashboard gauges and automation conditions.
+Diagnostic sensor reporting the continuous 1-second rolling RMS sound level from `0.0%` to `100.0%`. Updates every second for dashboard gauges and automation threshold conditions.
 
 ### Audio Level Peak
-Diagnostic sensor reporting the peak volume recorded over the last 1-second window (`0.0%` to `100.0%`). Tracks instantaneous transients, percussion hits, and loud impacts.
+Diagnostic sensor reporting the peak volume recorded over the last 1-second window (`0.0%` to `100.0%`). Tracks instantaneous transients, percussion hits, and loud impacts for noise spike triggers.
 
 ### Audio Source Status
 Diagnostic sensor reporting coupling health with WLED's AudioReactive engine (`OK`, `Clipping, reduce gain`, `AudioReactive mod disabled`, or `AudioReactive mod missing`).
 
 ### Auto Switch Presets
-Switch entity (`switch.<device>_auto_switch_presets`) to toggle autonomous preset switching on or off directly from Home Assistant.
+Switch entity (`switch.<device>_auto_switch_presets`) to toggle autonomous preset switching on or off directly from Home Assistant dashboards and automations.
 
 ---
 
 ## Example Automations
 
-- **Automatic audio-reactive lighting**: Switch from warm static lighting to an audio-reactive preset when music starts playing, and return to ambient lighting when it stops.
-- **Song-aware lighting effects**: Increase brightness and switch to vivid color palettes during the chorus or drop, speed up animations during buildups, and dim to a slow pulse during breakdowns.
-- **Tempo-matched animation speed**: Sync WLED effect speed to detected BPM so light pulses and color sweeps match the music tempo.
-- **Occupancy fallback**: Combine motion sensors with `Audio Detected` to keep lights on while people are talking, reading, or watching TV without moving.
-- **Late-night disturbance detection**: Flash a nightlight or send a notification if loud sounds occur during quiet hours.
+The exposed entities make powerful building blocks for Home Assistant automations:
+
+- **Automatic Audio-Reactive Lighting**: Use `Audio Type` changing to `Music` as a **trigger** to switch from warm static lighting to an audio-reactive preset, returning to ambient lighting when it returns to `Silence`.
+- **Energy-Conditioned Lighting Effects**: Check `Music Energy` or `Music Phrase` as **conditions** to boost brightness and switch to vivid color palettes during a chorus or drop, while dimming to a slow pulse during breakdowns.
+- **Tempo-Matched Animation Speed**: Read `BPM` to dynamically adjust WLED effect speed so light pulses and color sweeps match the music tempo.
+- **Acoustic Occupancy Fallback**: Combine PIR motion sensors with `Audio Detected` as a fallback **trigger or condition** to keep room lights on while people are talking or watching TV without moving.
+- **Late-Night Disturbance Alert**: Use `Audio Level Peak` crossing an upper threshold during quiet nighttime hours as a **trigger** to flash a nightlight or send a notification.
 
 ---
 
