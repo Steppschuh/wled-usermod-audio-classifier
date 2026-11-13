@@ -2,8 +2,7 @@
 
 # WLED Audio Classifier Usermod
 
-[![Latest Release](https://img.shields.io/github/v/release/Steppschuh/wled-usermod-audio-classifier?include_prereleases&sort=date&style=flat)](https://github.com/Steppschuh/wled-usermod-audio-classifier/releases)
-[![Build Firmware](https://github.com/Steppschuh/wled-usermod-audio-classifier/actions/workflows/build-firmware.yml/badge.svg)](https://github.com/Steppschuh/wled-usermod-audio-classifier/actions/workflows/build-firmware.yml)
+[![Latest Release](https://img.shields.io/github/v/release/Steppschuh/wled-usermod-audio-classifier?style=flat)](https://github.com/Steppschuh/wled-usermod-audio-classifier/releases/latest)
 [![License: EUPL-1.2](https://img.shields.io/badge/License-EUPL--1.2-blue.svg)](LICENSE)
 
 A [WLED](https://github.com/wled/WLED) usermod (v2) that turns your ESP32-based controller into an on-device audio classifier and music analyzer.
