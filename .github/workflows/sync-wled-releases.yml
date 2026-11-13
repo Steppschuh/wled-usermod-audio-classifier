@@ -36,10 +36,13 @@ jobs:
 
       - name: Resolve WLED and Usermod Versions
         id: resolve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_WLED_TAG: ${{ inputs.force_wled_tag }}
         run: |
           # 1. Determine upstream WLED tag
-          if [ -n "${{ inputs.force_wled_tag }}" ]; then
-            WLED_TAG="${{ inputs.force_wled_tag }}"
+          if [ -n "${FORCE_WLED_TAG}" ]; then
+            WLED_TAG="${FORCE_WLED_TAG}"
             echo "Using manually forced WLED tag: ${WLED_TAG}"
           else
             WLED_TAG=$(gh api repos/wled/WLED/releases/latest --jq .tag_name)
@@ -93,15 +96,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Open Issue for Failed Build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WLED_TAG: ${{ needs.check-upstream.outputs.wled_tag }}
         run: |
-          WLED_TAG="${{ needs.check-upstream.outputs.wled_tag }}"
           gh issue create \
-            --repo "${{ github.repository }}" \
+            --repo "${GITHUB_REPOSITORY}" \
             --title "Upstream WLED ${WLED_TAG} compatibility build failed" \
             --body "Automated build against new upstream WLED release **${WLED_TAG}** failed.
 
-          Please inspect the [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) to check for breaking changes in WLED core, ESP-IDF dependencies, or usermod APIs." \
+          Please inspect the [workflow run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) to check for breaking changes in WLED core, ESP-IDF dependencies, or usermod APIs." \
             --label "bug" || true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

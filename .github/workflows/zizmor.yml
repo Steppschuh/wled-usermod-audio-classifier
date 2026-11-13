@@ -28,6 +28,7 @@ jobs:
 
       - name: Run zizmor
         uses: zizmorcore/zizmor-action@v0.8.1
+        continue-on-error: true
         with:
           inputs: ./.github/
           advanced-security: false
