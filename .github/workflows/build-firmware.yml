@@ -70,16 +70,23 @@ on:
         required: false
         default: true
 
-permissions:
-  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
 
 jobs:
   test-native:
     name: Run Native Unit Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -99,6 +106,8 @@ jobs:
     name: Build WLED Firmware (${{ matrix.env }})
     needs: test-native
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -112,6 +121,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           path: usermod-repo
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -241,12 +251,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
         with:
           path: release_artifacts
           merge-multiple: true
+
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "release_artifacts/*"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3

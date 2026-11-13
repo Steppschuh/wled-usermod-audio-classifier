@@ -1,0 +1,64 @@
+name: Bug Report
+description: Report unexpected acoustic behavior, crashes, or build errors
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue! Please provide as much acoustic and hardware context as possible.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the observed bug or acoustic misbehavior.
+    validations:
+      required: true
+  - type: input
+    id: controller-hardware
+    attributes:
+      label: Controller Hardware / Board Model
+      description: What board or controller are you using?
+      placeholder: e.g. Gledopto GL-C-015WL-M, ESP32-WROOM-32, ESP32-S3 DevKit
+    validations:
+      required: true
+  - type: input
+    id: microphone-hardware
+    attributes:
+      label: Microphone Hardware
+      description: What microphone module or type is connected?
+      placeholder: e.g. Onboard digital mic, I2S INMP441, PDM ICS-43434, Analog MAX9814
+    validations:
+      required: true
+  - type: input
+    id: wled-version
+    attributes:
+      label: WLED Core Version
+      description: Which WLED version is installed?
+      placeholder: e.g. 16.0.1, 0.14.4, 17.0.0-dev
+    validations:
+      required: true
+  - type: input
+    id: usermod-version
+    attributes:
+      label: Audio Classifier Usermod Version
+      description: Which version of this usermod is installed?
+      placeholder: e.g. v0.3.0
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce & Acoustic Conditions
+      description: How can the issue be reproduced? Describe the room acoustic conditions (silence, HVAC hum, music genre, volume level).
+      placeholder: |
+        1. Set squelch to 6, gain to 50 in AudioReactive.
+        2. Play EDM track with quiet breakdown at 20% room volume.
+        3. Observe phrase flips to Outro after 1 second instead of holding Breakdown.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Serial Console / MQTT Telemetry Logs
+      description: Paste relevant serial terminal logs or MQTT telemetry output from `wled/<device>/audio/*`.
+      render: shell

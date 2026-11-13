@@ -1,0 +1,33 @@
+name: Feature Request
+description: Propose a new acoustic detection capability, preset feature, or Home Assistant entity
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting an improvement to the WLED Audio Classifier usermod!
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement / Use Case
+      description: What challenge or use case does this feature address?
+      placeholder: e.g. "I want to automatically dim presets during spoken podcasts without switching to a party music preset..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed Solution & Acoustic Behavior
+      description: Describe your proposed solution, state machine behavior, or new Home Assistant entity.
+    validations:
+      required: true
+  - type: dropdown
+    id: hardware-testing
+    attributes:
+      label: Physical Hardware Testing
+      description: Are you able to test firmware builds on physical ESP32 microphone hardware?
+      options:
+        - "Yes, I can test on physical hardware and provide MQTT/serial logs"
+        - "No, this is a conceptual proposal"
+    validations:
+      required: true

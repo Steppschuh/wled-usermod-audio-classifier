@@ -2,6 +2,23 @@ version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
+    cooldown:
+      default-days: 7
     schedule:
       interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
+  - package-ecosystem: "pip"
+    directory: "/"
+    cooldown:
+      default-days: 7
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      python-tools:
+        patterns:
+          - "*"
