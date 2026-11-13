@@ -171,17 +171,3 @@ jobs:
               gh api -X DELETE "repos/${REPOSITORY}/git/refs/tags/${tag}" 2>/dev/null || true
             done <<< "${LEFTOVER_TAGS}"
           fi
-
-          echo "Scanning for any orphaned remote tags without a matching GitHub Release..."
-          ACTIVE_RELEASES=$(gh api --paginate "repos/${REPOSITORY}/releases" | jq -r '.[].tag_name')
-          ALL_REMOTE_TAGS=$(gh api --paginate "repos/${REPOSITORY}/tags" | jq -r '.[].name')
-
-          if [[ -n "${ALL_REMOTE_TAGS}" ]]; then
-            while IFS= read -r r_tag; do
-              [[ -z "${r_tag}" ]] && continue
-              if ! echo "${ACTIVE_RELEASES}" | grep -Fxq "${r_tag}"; then
-                echo "Tag '${r_tag}' has no matching release. Deleting orphaned tag from remote..."
-                gh api -X DELETE "repos/${REPOSITORY}/git/refs/tags/${r_tag}" 2>/dev/null || true
-              fi
-            done <<< "${ALL_REMOTE_TAGS}"
-          fi
