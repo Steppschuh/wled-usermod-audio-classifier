@@ -262,6 +262,7 @@ jobs:
 
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@v4
+        continue-on-error: true
         with:
           subject-path: "release_artifacts/*"
 
