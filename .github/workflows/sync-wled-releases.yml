@@ -68,8 +68,6 @@ jobs:
             echo "Release ${RELEASE_TAG} does not exist. Triggering build & release."
             echo "already_released=false" >> $GITHUB_OUTPUT
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-and-release:
     name: Build & Release Firmware
