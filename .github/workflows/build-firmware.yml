@@ -11,7 +11,7 @@ on:
       wled_ref:
         description: 'WLED git ref (tag, branch, or commit SHA)'
         required: false
-        default: '6ee67dec94f3cd3fb2b85b81abb9de380b924c48'
+        default: 'v16.0.1'
       release_tag:
         description: 'Optional tag for GitHub Release (e.g. wled-v16.0.1-mod-v0.1.0)'
         required: false
@@ -44,7 +44,7 @@ on:
       wled_ref:
         type: string
         required: false
-        default: '6ee67dec94f3cd3fb2b85b81abb9de380b924c48'
+        default: 'v16.0.1'
       release_tag:
         type: string
         required: false
@@ -105,7 +105,7 @@ jobs:
         env: [esp32dev]
 
     env:
-      WLED_REF: ${{ inputs.wled_ref || '6ee67dec94f3cd3fb2b85b81abb9de380b924c48' }}
+      WLED_REF: ${{ inputs.wled_ref || 'v16.0.1' }}
 
     steps:
       - name: Checkout Usermod Repo

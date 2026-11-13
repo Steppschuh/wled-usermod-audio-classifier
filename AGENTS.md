@@ -78,7 +78,9 @@ WLED builds require the core WLED repository (typically located at `<path-to-wle
 
 ```bash
 git clone https://github.com/wled/WLED.git /tmp/wled-core
+cd /tmp/wled-core && git checkout v16.0.1
 ```
+*(Always check out official release tags like `v16.0.1` for production builds to avoid experimental development banners like `17.0.0-devV5`).*
 
 ### Usermod Integration via `platformio_override.ini`
 In `<path-to-wled-core>/platformio_override.ini`:

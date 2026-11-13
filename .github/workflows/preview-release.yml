@@ -31,7 +31,7 @@ jobs:
       - name: Resolve Preview Version & Tag
         id: meta
         run: |
-          WLED_TAG=$(gh api repos/wled/WLED/releases/latest --jq .tag_name 2>/dev/null || echo "6ee67dec94f3cd3fb2b85b81abb9de380b924c48")
+          WLED_TAG=$(gh api repos/wled/WLED/releases/latest --jq .tag_name 2>/dev/null || echo "v16.0.1")
           USERMOD_VERSION=$(jq -r '.version // "0.1.0"' library.json)
           USERMOD_TAG="v${USERMOD_VERSION#v}"
           SHORT_SHA=$(git rev-parse --short HEAD)

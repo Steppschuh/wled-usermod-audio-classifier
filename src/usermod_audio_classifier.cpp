@@ -326,6 +326,9 @@ void AudioClassifierUsermod::readFromJsonState(JsonObject& root) {
     } else if (usermod["auto"].is<bool>()) {
       setAutoMode(usermod["auto"].as<bool>());
     }
+    if (usermod[FPSTR(_streamRaw)].is<bool>()) {
+      rawStreamEnabled = usermod[FPSTR(_streamRaw)].as<bool>();
+    }
   }
 
   // Also immediately detect if AudioReactive was toggled in this state update
@@ -361,7 +364,9 @@ void AudioClassifierUsermod::addToConfig(JsonObject& root) {
   top[FPSTR(_onDelay)] = config.onDelayMs;
   top[FPSTR(_offDelay)] = config.offDelayMs;
   top[FPSTR(_musicHold)] = config.musicHoldMs;
+#if defined(AUDIO_CLASSIFIER_DEV) || defined(WLED_DEBUG)
   top[FPSTR(_streamRaw)] = rawStreamEnabled;
+#endif
 
   JsonObject autoObj = top.createNestedObject(FPSTR(_automation));
   autoObj[FPSTR(_autoSwitchPresets)] = autoConfig.enabled;
@@ -410,7 +415,9 @@ bool AudioClassifierUsermod::readFromConfig(JsonObject& root) {
   config.onDelayMs = top[FPSTR(_onDelay)] | config.onDelayMs;
   config.offDelayMs = top[FPSTR(_offDelay)] | config.offDelayMs;
   config.musicHoldMs = top[FPSTR(_musicHold)] | config.musicHoldMs;
+#if defined(AUDIO_CLASSIFIER_DEV) || defined(WLED_DEBUG)
   readBool(top, _streamRaw, rawStreamEnabled);
+#endif
 
   JsonObject autoObj = top[FPSTR(_automation)];
   bool hasCurrentAutomationKeys = !autoObj.isNull() && !autoObj[FPSTR(_autoSwitchPresets)].isNull();

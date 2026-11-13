@@ -20,7 +20,7 @@ Works with off-the-shelf microphone controllers (e.g. Gledopto GL-C-015WL-M, GL-
 
 ## Features
 
-- **100% Local On-Device Intelligence**: Processes FFT audio frames in volatile ESP32 RAM with minimal overhead; no audio is ever recorded, stored, or streamed over the network.
+- **Local & Private Acoustic Processing**: Analyzes FFT frequency bands and volume metrics in volatile ESP32 RAM with minimal overhead; raw microphone audio (voice or speech) is never recorded, stored, or transmitted over the network (an optional diagnostic telemetry mode is available during development solely to stream numerical frequency frames for test recordings).
 - **Low-Overhead AudioReactive Coupling**: Reads FFT and volume data directly in memory (`getUMData`) without competing for I2S bus access.
 - **Adaptive Noise Floor**: Tracks ambient room baseline via a 5-minute 10th-percentile filter, freezing during active sound to prevent baseline creep.
 - **Debounced Sound Presence**: Configurable on/off delays (1.2 s / 8.0 s) ignore transient noises (claps, door slams) and brief track pauses.
@@ -184,7 +184,7 @@ Configure under **Config > Usermods > AudioClassifier**:
 | **`On Delay`** | `1200 ms` | Continuous sound duration required before triggering presence. |
 | **`Off Delay`** | `8000 ms` | Continuous silence duration required before clearing presence. |
 | **`Music Hold`** | `30000 ms` | Hold time in music state during quiet bridges and breakdowns. |
-| **`Stream Raw`** | `false` | Stream raw audio frames over MQTT (`wled/<device>/audio/raw`) for analysis. |
+| **`Stream Raw`** | `false` | *(Development builds only)* Stream raw frequency telemetry frames over MQTT (`wled/<device>/audio/raw`) for fixture recording. |
 
 #### Standalone Automation (`automation`)
 Autonomously selects presets from `/presets.json` without an external automation server:
