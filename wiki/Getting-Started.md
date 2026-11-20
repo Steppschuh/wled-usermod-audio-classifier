@@ -1,6 +1,4 @@
-# Getting Started: From Box to Audio-Reactive WLED
-
-This guide walks you through setting up a WLED controller from scratch, installing the **WLED Audio Classifier** firmware, and tuning the microphone so it reliably detects silence, room noise, and music.
+This guide walks you through setting up a [WLED](https://kno.wled.ge/) controller from scratch, installing the **WLED Audio Classifier** firmware, and tuning the microphone so it reliably detects silence, room noise, and music.
 
 No prior experience with WLED, GitHub, or programming is required.
 
@@ -28,15 +26,15 @@ Pick the option that matches your controller to skip the steps you don't need:
 ## Before You Start
 
 ### What You Need
-1. **An ESP32-based WLED controller with a microphone** (for example: Gledopto `GL-C-015WL-M`, `GL-C-310WL`, a QuinLED board with a mic, or a DIY ESP32 + microphone build).
+1. **An ESP32-based WLED controller with a microphone** (for example: Gledopto `GL-C-015WL-M`, `GL-C-310WL`, a QuinLED board with a mic, or a DIY ESP32 + [supported digital/analog microphone](https://kno.wled.ge/advanced/audio-reactive/#supported-microphones)).
 2. **An addressable LED strip** wired to the controller and connected to a power supply.
 3. **A computer or smartphone** connected to your home Wi-Fi (ESP32 controllers require a 2.4 GHz Wi-Fi network).
 
 ### Why Install Custom Firmware?
 Most controllers ship from the factory with standard WLED software. Standard WLED can blink lights to sound, but it does not classify what it is hearing.
 
-In WLED, optional features are compiled in as **usermods** (add-on modules). The firmware from this repository is standard WLED with two usermods included:
-- **`AudioReactive`**: Samples the microphone to measure volume and frequency bands.
+In WLED, optional features are compiled in as [**usermods**](https://kno.wled.ge/advanced/usermods/) (add-on modules). The firmware from this repository is standard WLED with two usermods included:
+- **[`AudioReactive`](https://kno.wled.ge/advanced/audio-reactive/)**: Samples the microphone to measure volume and frequency bands.
 - **`AudioClassifier`**: Analyzes that audio stream in memory to detect **Silence**, **Ambient Noise** (talking, TV, household activity), and **Music** (including song energy, tempo/BPM, and sections like verse, buildup, chorus, and breakdown).
 
 ---
@@ -45,10 +43,10 @@ In WLED, optional features are compiled in as **usermods** (add-on modules). The
 
 > **Skip to [Step 1](#step-1-connect-to-your-controller-for-the-first-time)** if you bought a pre-made WLED controller (such as Gledopto or QuinLED) that already comes with WLED installed.
 
-If you are starting with a bare ESP32 development board without WLED:
+If you are starting with a bare ESP32 development board without WLED (see also the [official WLED binary installation guide](https://kno.wled.ge/basics/install-binary/)):
 
 1. Open the [**Releases page**](https://github.com/Steppschuh/wled-usermod-audio-classifier/releases) in your browser and find the top release marked **Latest**.
-2. Under **Assets** at the bottom of that release, click the **`*_factory.bin`** file (for example, `WLED_16.0.1_MOD_0.3.0_ESP32_factory.bin`) to download it.
+2. Under **Assets** at the bottom of that release, click the **`*_factory.bin`** file (`WLED_*_MOD_*_ESP32_factory.bin`) to download it.
    *(The `_factory.bin` file includes the bootloader required when flashing a blank chip over USB).*
 3. Connect the ESP32 board to your computer with a **USB data cable** (make sure it is not a charge-only cable).
 4. Open [ESPHome Web Flasher](https://web.esphome.io/) in **Google Chrome** or **Microsoft Edge**.
@@ -56,13 +54,15 @@ If you are starting with a bare ESP32 development board without WLED:
 6. Click **Install**, select the **`WLED_..._ESP32_factory.bin`** file you downloaded, and click **Install**.
 7. Wait 1–2 minutes for flashing to finish, then unplug and replug the board.
 
+<!-- Screenshot placeholder: ESPHome Web Flasher dialog showing a connected USB serial port and the selected WLED_*_ESP32_factory.bin firmware file -->
+
 Your board now has WLED + Audio Classifier installed. Continue to **Step 1** below to connect it to your Wi-Fi.
 
 ---
 
 ## Step 1: Connect to Your Controller for the First Time
 
-When a new WLED controller is powered on for the first time, it creates a temporary Wi-Fi hotspot so you can enter your home Wi-Fi credentials.
+When a new WLED controller is powered on for the first time, it creates a temporary Wi-Fi hotspot so you can enter your home Wi-Fi credentials (see the [official WLED Getting Started guide](https://kno.wled.ge/basics/getting-started/) for additional details).
 
 1. Plug your controller into power.
 2. Open the **Wi-Fi settings** on your phone or computer.
@@ -91,6 +91,8 @@ When a new WLED controller is powered on for the first time, it creates a tempor
    This lets you open the controller later at `http://wled-livingroom.local`.
 5. Click **Save & Connect** at the bottom.
 
+<!-- Screenshot placeholder: WLED Config > WiFi Setup screen highlighting Network name (SSID), Network password, mDNS address ("wled-livingroom"), and the "Save & Connect" button -->
+
 The controller will restart and join your home Wi-Fi, and your phone or computer will reconnect to your normal Wi-Fi network.
 
 ---
@@ -99,15 +101,17 @@ The controller will restart and join your home Wi-Fi, and your phone or computer
 
 Once your phone or computer is back on your home Wi-Fi, open the controller using any of these methods:
 
-- **Option A — WLED Native App (Phone/Tablet):** Install the free **WLED Native** app from the App Store or Google Play. Tap **`+`** to scan your network and discover the controller automatically.
+- **Option A — WLED Native App (Phone/Tablet):** Install the free **WLED Native** app ([iOS App Store](https://apps.apple.com/app/wled-native/id6446207239) / [Google Play](https://play.google.com/store/apps/details?id=ca.cgagnier.wlednativeandroid)). Tap **`+`** to scan your network and discover the controller automatically.
 - **Option B — Browser Address (`mDNS`):** Open your browser and go to `http://wled-livingroom.local` (using the mDNS name you set in Step 2).
 - **Option C — IP Address:** Find the controller's IP address in your router's connected devices list (for example, `192.168.1.50`) and open `http://192.168.1.50` in your browser.
 
 ### Set Your LED Strip Length
-By default, WLED only lights up the first **30 LEDs**. To match your strip:
+By default, WLED only lights up the first **30 LEDs**. To match your strip (see [WLED LED Preferences documentation](https://kno.wled.ge/features/settings/#led-preferences) for advanced strip types and power limits):
 1. Go to **Config > LED Preferences**.
 2. Under **Hardware setup**, change **Length** from `30` to the total number of LEDs on your strip (and verify **GPIO** if your data line uses a different pin).
 3. Click **Save** at the bottom, then click **Back** to verify the full strip lights up.
+
+<!-- Screenshot placeholder: WLED Config > LED Preferences > Hardware setup showing LED strip type, Color Order, Length field, and Data GPIO pin -->
 
 > **Flashed via USB in [Step 0](#step-0-flash-a-blank-esp32-via-usb)?**
 > Your board already has the Audio Classifier firmware installed. Skip Steps 4 & 5 and continue at **[Step 6: Verify Your Microphone Hardware Settings](#step-6-verify-your-microphone-hardware-settings-audioreactive)**.
@@ -121,9 +125,11 @@ Download the pre-built firmware update file from GitHub:
 1. Open the [**Releases page**](https://github.com/Steppschuh/wled-usermod-audio-classifier/releases) in your browser.
 2. Find the top release marked with the green **Latest** badge.
 3. Under **Assets** at the bottom of that release (click **Assets** if collapsed), download the standard `.bin` file (**without** `_factory` in the filename):
-   - ✅ **`WLED_16.0.1_MOD_0.3.0_ESP32.bin`** *(Download this file — version numbers may be newer)*
-   - ❌ `WLED_16.0.1_MOD_0.3.0_ESP32_factory.bin` *(Skip — only for blank chips over USB)*
+   - ✅ **`WLED_*_MOD_*_ESP32.bin`** *(Download this file)*
+   - ❌ `WLED_*_MOD_*_ESP32_factory.bin` *(Skip — only for blank chips over USB)*
    - ❌ `SHA256SUMS` *(Skip — checksum text file)*
+
+<!-- Screenshot placeholder: GitHub Releases page showing the "Latest" release block with Assets expanded and an arrow pointing to WLED_*_ESP32.bin -->
 
 Keep the downloaded `.bin` file in your **Downloads** folder without opening it.
 
@@ -134,6 +140,9 @@ Keep the downloaded `.bin` file in your **Downloads** folder without opening it.
 1. In your WLED browser tab, go to **Config > Security & Updates**.
 2. Scroll down to **Software Update** and click **Manual OTA Update**.
 3. Click **Choose File** (or **Browse**), select the **`WLED_..._ESP32.bin`** file you downloaded, and click **Update!**.
+
+<!-- Screenshot placeholder: WLED Config > Security & Updates > Manual OTA Update dialog showing the selected WLED_*_ESP32.bin file and the "Update!" button -->
+
 4. After ~30–45 seconds you will see:
    > **Update successful! Rebooting now...**
 5. Wait another 15 seconds for the reboot to finish, then return to the main WLED page and refresh.
@@ -144,13 +153,13 @@ Your Wi-Fi and LED settings are preserved automatically.
 
 ## Step 6: Verify Your Microphone Hardware Settings (`AudioReactive`)
 
-Make sure WLED is configured to read from your controller's microphone:
+Make sure WLED's [`AudioReactive` usermod](https://kno.wled.ge/advanced/audio-reactive/) is configured to read from your controller's microphone:
 
 1. Go to **Config > Usermods**.
 2. Under **AudioReactive** at the top, confirm **Enabled** is checked.
 3. **Check the Microphone Type & Pins:**
    - **Pre-built controllers (Gledopto, etc.):** If your controller shipped with WLED pre-installed, the microphone pins are typically already set. If they were reset, check the label printed on the controller housing or manual.
-   - **Common pinouts:**
+   - **Common pinouts** (see the [WLED AudioReactive microphone wiring guide](https://kno.wled.ge/advanced/audio-reactive/#wiring) for additional microphones):
 
      | Controller / Mic Hardware | Digitalmic Type | I2S SD Pin (DOUT) | I2S WS Pin (LRCLK / CLK) | I2S SCK Pin (BCLK) |
      | :--- | :--- | :--- | :--- | :--- |
@@ -163,7 +172,7 @@ Make sure WLED is configured to read from your controller's microphone:
 
 ## Step 7: Tune Microphone Gain, Squelch & AGC
 
-For the classifier to separate silence, conversation, and music accurately, configure these settings under **Config > Usermods > AudioReactive**:
+For the classifier to separate silence, conversation, and music accurately, configure these settings under **Config > Usermods > AudioReactive** (see [official AudioReactive settings docs](https://kno.wled.ge/advanced/audio-reactive/#settings)):
 
 | Setting | Recommended | Purpose |
 | :--- | :--- | :--- |
@@ -181,6 +190,8 @@ For the classifier to separate silence, conversation, and music accurately, conf
 
 ### 3. Set Gain (Sensitivity) to `50`
 - **What it does:** Sets overall microphone amplification. Typical range is `40–70`.
+
+<!-- Screenshot placeholder: WLED Config > Usermods > AudioReactive section showing Enabled checked, Digitalmic type and pins, Squelch set to 6, Gain set to 50, and AGC set to 0 (Off) -->
 
 Click **Save** at the bottom of the **Usermods** page.
 
@@ -201,6 +212,8 @@ Click **Save** at the bottom of the **Usermods** page.
 | **`Off Delay`** | `8000 ms` | Continuous silence duration required before clearing presence (bridges brief speech/track pauses). |
 | **`Music Hold`** | `30000 ms` | Hold time in `Music` state across quiet song bridges and breakdowns. |
 
+<!-- Screenshot placeholder: WLED Config > Usermods > AudioClassifier section showing Enabled checked, MQTT Auto-Discovery checked, and the default threshold/delay settings -->
+
 3. Click **Save** if you changed anything, then click **Back** to return to the main WLED view.
 
 ### Test Live Classification in WLED
@@ -219,8 +232,10 @@ Click **Save** at the bottom of the **Usermods** page.
      Type: Music, Energy: 48%
      ```
 
+<!-- Screenshot placeholder: WLED Info (i) popup highlighting the AudioClassifier row ("Type: Music, Energy: 48%") and the Refresh button -->
+
 ### Fine-Tune Squelch and Gain with a Visual Effect
-1. Close the Info popup and select an audio-reactive effect (marked with **`♪`**) under the **Effects** tab, such as **GEQ** or **Gravimeter**.
+1. Close the Info popup and select an [audio-reactive effect](https://kno.wled.ge/advanced/audio-reactive/#effects) (marked with **`♪`**) under the **Effects** tab, such as **GEQ** or **Gravimeter**.
 2. **In a quiet room (Squelch):**
    - The LEDs should remain still or dark.
    - If the LEDs twitch in silence, go to **Config > Usermods > AudioReactive**, increase **Squelch** by **`+2`** (e.g. `6` → `8`), and click **Save**.

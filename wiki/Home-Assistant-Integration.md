@@ -1,8 +1,6 @@
-# Home Assistant Integration via MQTT
+Connecting your WLED Audio Classifier controller to [**Home Assistant**](https://www.home-assistant.io/) exposes **live sensors, switches, and diagnostic entities**—allowing you to build automations around sound presence, audio type (`Silence`, `Ambient Noise`, `Music`), song energy (`0–100%`), song sections (`Chorus`, `Breakdown`, etc.), and tempo (`BPM`).
 
-Connecting your WLED Audio Classifier controller to **Home Assistant** exposes **11 live sensors, switches, and diagnostic entities**—allowing you to build automations around sound presence, audio type (`Silence`, `Ambient Noise`, `Music`), song energy (`0–100%`), song sections (`Chorus`, `Breakdown`, etc.), and tempo (`BPM`).
-
-All entities are discovered automatically over **MQTT** without manual sensor YAML.
+All entities are discovered automatically over [**MQTT**](https://www.home-assistant.io/integrations/mqtt/) without manual sensor YAML.
 
 ### Jump to Your Starting Point
 - **[I don't have MQTT set up in Home Assistant yet](#step-1-set-up-an-mqtt-broker-in-home-assistant)** — Install the official Mosquitto broker add-on.
@@ -23,7 +21,7 @@ All entities are discovered automatically over **MQTT** without manual sensor YA
 
 ## How the Integration Works
 
-Home Assistant's built-in **WLED integration** controls your LEDs (power, brightness, colors, and presets). To push real-time audio classification updates without polling lag, the **Audio Classifier** uses **MQTT Auto-Discovery**.
+Home Assistant's built-in [**WLED integration**](https://www.home-assistant.io/integrations/wled/) controls your LEDs (power, brightness, colors, and presets). To push real-time audio classification updates without polling lag, the **Audio Classifier** uses [**MQTT Auto-Discovery**](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery).
 
 Once both Home Assistant and your WLED controller connect to the same MQTT broker:
 1. The controller announces its audio sensors and switches automatically.
@@ -35,7 +33,7 @@ Once both Home Assistant and your WLED controller connect to the same MQTT broke
 
 > **Already using MQTT** (for example with Zigbee2MQTT or Tasmota)? **Skip to [Step 2](#step-2-connect-wled-to-your-mqtt-broker).**
 
-If you don't have an MQTT broker running yet, install the official Home Assistant add-on:
+If you don't have an MQTT broker running yet, install the official [Mosquitto broker add-on](https://github.com/home-assistant/addons/tree/master/mosquitto):
 
 1. **Install the Mosquitto Broker Add-on:**
    - In Home Assistant, go to **Settings > Add-ons > Add-on Store** (bottom right).
@@ -45,16 +43,18 @@ If you don't have an MQTT broker running yet, install the official Home Assistan
    - Go to **Settings > People > Users** tab (at the top).
    - Click **Add user**, name it `mqtt` (you can check *Can only log in from the local network*), set a password, and click **Create**.
    - *(The Mosquitto add-on automatically accepts credentials from any Home Assistant user account).*
-3. **Enable the MQTT Integration:**
+3. **Enable the [MQTT Integration](https://www.home-assistant.io/integrations/mqtt/):**
    - Go to **Settings > Devices & Services**.
    - Find **Mosquitto broker** under **Discovered** and click **Configure > Submit**.
+
+<!-- Screenshot placeholder: Home Assistant Settings > Devices & Services showing the discovered Mosquitto broker / MQTT integration card -->
 
 ---
 
 ## Step 2: Connect WLED to Your MQTT Broker
 
 1. Open your WLED controller's web interface (`http://<wled-ip>` or `http://wled-livingroom.local`).
-2. Go to **Config > Sync Interfaces** and scroll to **MQTT**:
+2. Go to **Config > Sync Interfaces** and scroll to [**MQTT**](https://kno.wled.ge/interfaces/mqtt/):
    - Check **Enable MQTT**.
    - **Broker:** Enter your Home Assistant IP address (for example, `192.168.1.100`).
    - **Port:** Leave at `1883`.
@@ -62,6 +62,9 @@ If you don't have an MQTT broker running yet, install the official Home Assistan
    - **Password:** Enter your MQTT password.
    - **Device Topic:** Leave at the default `wled/%mac%` (or enter a custom topic like `wled/livingroom`).
 3. Click **Save** at the bottom of the page.
+
+<!-- Screenshot placeholder: WLED Config > Sync Interfaces > MQTT section showing Enable MQTT checked, Broker IP address, Port 1883, Username, Password, and Device Topic set to wled/%mac% -->
+
 4. Go to **Config > Usermods > AudioClassifier** and confirm **MQTT Auto-Discovery** is checked (enabled by default).
 5. If MQTT does not connect right away, go to **Config > Security & Updates** and click **Reboot WLED**.
 
@@ -71,7 +74,9 @@ If you don't have an MQTT broker running yet, install the official Home Assistan
 
 1. In Home Assistant, go to **Settings > Devices & Services**.
 2. Open the **MQTT** integration (or the **WLED** integration if you have both configured).
-3. Select your WLED controller device to view all **11 Audio Classifier entities** under **Sensors**, **Controls**, and **Diagnostics**.
+3. Select your WLED controller device to view the **Audio Classifier entities** under **Sensors**, **Controls**, and **Diagnostics**.
+
+<!-- Screenshot placeholder: Home Assistant Device page for the WLED controller showing the auto-discovered Audio Classifier sensors, controls, and diagnostic entities merged alongside WLED lighting controls -->
 
 ---
 
@@ -104,7 +109,7 @@ If you don't have an MQTT broker running yet, install the official Home Assistan
 
 ## Precision Calibration Using Home Assistant Diagnostics
 
-Watching **`Audio Level RMS`**, **`Audio Level Peak`**, and **`Audio Source Status`** in Home Assistant makes microphone tuning much more exact:
+Watching **`Audio Level RMS`**, **`Audio Level Peak`**, and **`Audio Source Status`** in Home Assistant makes [microphone tuning](https://kno.wled.ge/advanced/audio-reactive/#settings) much more exact:
 
 1. **Squelch (Noise Gate):**
    - Keep the room quiet.
@@ -117,15 +122,17 @@ Watching **`Audio Level RMS`**, **`Audio Level Peak`**, and **`Audio Source Stat
 3. **Classifier Thresholds (Optional):**
    - If your room has constant background noise (such as a fan or HVAC) where **`Audio Level RMS`** rests around `3%`, go to **Config > Usermods > AudioClassifier** and set **`Quiet Threshold`** to **`2–3%` above** that baseline (e.g. `5.5%` or `6.0%`).
 
+<!-- Screenshot placeholder: Home Assistant Diagnostics card or history graph showing Audio Level RMS (0.0% in silence, ~25% in speech, ~75% in music), Audio Level Peak, and Audio Source Status ("OK") -->
+
 ---
 
 ## Example Automations
 
-If you use **[Standalone Auto-Reactive Preset Switching](Standalone-Preset-Switching)**, the controller already switches effects by song energy on its own. Home Assistant lets you go further in two ways:
+If you use **[Standalone Auto-Reactive Preset Switching](Standalone-Preset-Switching)**, the controller already switches effects by song energy on its own. [Home Assistant Automations](https://www.home-assistant.io/docs/automation/) let you go further in two ways:
 1. **Controlling WLED & AudioClassifier** using context from other devices in your home.
 2. **Controlling other smart home devices** using the audio classification sensors.
 
-*(In the YAML examples below, replace `wled_livingroom` with your WLED device's entity prefix in Home Assistant).*
+*(In the YAML examples below, replace `wled_livingroom` with your WLED device's entity prefix in Home Assistant. To paste YAML into Home Assistant, go to **Settings > Automations & scenes > Create Automation > Create new automation**, click the **⋮** menu in the top right, and select **Edit in YAML**).*
 
 ---
 

@@ -48,7 +48,7 @@ If you don't run Home Assistant or an MQTT broker, the usermod can switch preset
 
 ## Home Assistant Integration
 
-When MQTT is enabled in WLED (**Config > Sync Interfaces > MQTT**), the classifier automatically discovers **11 entities** under your WLED device in Home Assistant:
+When MQTT is enabled in WLED (**Config > Sync Interfaces > MQTT**), the classifier automatically discovers the following entities under your WLED device in Home Assistant:
 
 | Entity | Type | Values / Range | Description |
 | :--- | :--- | :--- | :--- |

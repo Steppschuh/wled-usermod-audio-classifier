@@ -1,6 +1,4 @@
-# Standalone Auto-Reactive Preset Switching
-
-Once your controller is running the Audio Classifier firmware (see **[Getting Started](Getting-Started)**), it can automatically switch WLED lighting presets to match what is happening in the room—without needing Home Assistant or an external server.
+Once your controller is running the Audio Classifier firmware (see **[Getting Started](Getting-Started)**), it can automatically switch [WLED lighting presets](https://kno.wled.ge/features/presets/) to match what is happening in the room—without needing Home Assistant or an external server.
 
 ### Jump to Your Goal
 - **[I want to learn how the 5 energy slots work](#how-standalone-preset-switching-works)**
@@ -44,15 +42,15 @@ The Audio Classifier maps the current room sound and song section into one of **
 
 ## Step 1: Create Your Presets in WLED
 
-In WLED, a **preset** is a saved combination of colors, brightness, and an effect.
+In WLED, a [**preset**](https://kno.wled.ge/features/presets/) is a saved combination of colors, brightness, and an effect.
 
 1. **Choose your colors:**
    - Open your WLED controller in your browser or the WLED app.
-   - In the **Colors** tab, pick a color on the color wheel (for static ambient lighting) or scroll down and select a **Color Palette** (such as *Party*, *Ocean*, *Sunset*, or *Fire* for dynamic effects).
+   - In the **Colors** tab, pick a color on the color wheel (for static ambient lighting) or scroll down and select a [**Color Palette**](https://kno.wled.ge/features/palettes/) (such as *Party*, *Ocean*, *Sunset*, or *Fire* for dynamic effects).
 2. **Choose an effect:**
-   - Open the **Effects** tab.
+   - Open the [**Effects**](https://kno.wled.ge/features/effects/) tab.
    - For your **`Ambient`** (no music) preset, pick a calm non-audio effect like **Solid**, **Breathe**, or **Candle**.
-   - For your **`AR Low / Mid / High / Max`** (music) presets, pick an audio-reactive effect marked with a **`♪`** musical note icon (see recommendations in **Step 2** below).
+   - For your **`AR Low / Mid / High / Max`** (music) presets, pick an [audio-reactive effect](https://kno.wled.ge/advanced/audio-reactive/#effects) marked with a **`♪`** musical note icon (see recommendations in **Step 2** below).
    - Adjust the **Effect speed** and **Effect intensity** sliders at the bottom of the Effects tab.
 3. **Save it as a Preset:**
    - Open the **Presets** tab and click **+ Preset**.
@@ -61,6 +59,8 @@ In WLED, a **preset** is a saved combination of colors, brightness, and an effec
      Ambient Warm Glow
      ```
    - Leave **Save to ID** at the suggested number (`1–250`) and click **Save preset**.
+
+<!-- Screenshot placeholder: WLED Presets tab with "+ Preset" expanded, showing the Name field ("Ambient Warm Glow"), Include brightness / Save segment bounds checkboxes, Save to ID, and the "Save preset" button -->
 
 > **Tip: Keeping your own colors while effects switch**
 > When saving an `AR *` preset, if you want the controller to only switch the *effect* while keeping your current color palette or brightness, uncheck **Include brightness** (or edit the preset's saved segments/colors). If you want each energy slot to have its own color theme and brightness, keep **Include brightness** checked.
@@ -81,6 +81,8 @@ To get started quickly, try creating this 5-preset set:
 
 *(Create a second or third preset for any slot—such as `AR Mid Color Waves` and `AR Mid Beat Pulse`—and the controller will alternate between them automatically).*
 
+<!-- Screenshot placeholder: WLED Presets list showing saved presets organized with "Ambient", "AR Low", "AR Mid", "AR High", and "AR Max" prefixes -->
+
 ---
 
 ## Step 3: Enable Auto Switch Presets
@@ -90,7 +92,7 @@ To get started quickly, try creating this 5-preset set:
 
 | Setting | Default | Description |
 | :--- | :--- | :--- |
-| **`Auto Switch Presets`** | `false` | Master toggle for standalone preset switching. Can also be toggled via Home Assistant or the `/json/state` API (`AudioClassifier.auto_switch_presets`). |
+| **`Auto Switch Presets`** | `false` | Master toggle for standalone preset switching. Can also be toggled via Home Assistant or the [WLED JSON API](https://kno.wled.ge/interfaces/json-api/) (`/json/state` with `{"AudioClassifier":{"auto_switch_presets":true}}`). |
 | **`Manual Override Hold`** | `true` | Pause automatic preset switching after manual WLED changes until audio returns to `Silence`. |
 | **`Preset Cooldown`** | `15 s` | Minimum dwell time enforced between automatic preset switches. |
 | **`Preset No Music`** | `0` | Explicit Preset ID (`1–250`) for `Silence` / `Ambient Noise`, or `0` to match `Ambient *` presets. |
@@ -100,6 +102,8 @@ To get started quickly, try creating this 5-preset set:
 | **`Preset Max Energy`** | `0` | Explicit Preset ID (`1–250`) for `Chorus`, or `0` to match `AR Max *` presets. |
 
 3. Check **`Auto Switch Presets`** and click **Save** at the bottom of the page.
+
+<!-- Screenshot placeholder: WLED Config > Usermods > AudioClassifier > Automation section showing Auto Switch Presets checked, Manual Override Hold checked, Preset Cooldown at 15 s, and the five Preset slot ID fields set to 0 -->
 
 ---
 
@@ -115,6 +119,8 @@ If you manually change a color, brightness, effect, or preset while sound is act
   - `Type: Music, Energy: 72% [Auto Switch]` — Automatic preset switching is active.
   - `Type: Music, Energy: 72% [Auto Switch: Hold]` — Paused after a manual lighting change.
 - **How it resumes:** Automatic switching resumes automatically once the room returns to **`Silence`**, or if you toggle **Auto Switch Presets** off and back on.
+
+<!-- Screenshot placeholder: WLED Info (i) popup showing the AudioClassifier line with "[Auto Switch]" active vs. "[Auto Switch: Hold]" after a manual adjustment -->
 
 ### 3. Strip Power & Nightlight Behavior
 If you turn the WLED strip **Off** (power button off / brightness `0`) or activate WLED's **Nightlight** timer, automatic preset switching stays inactive and will not turn your lights back on by itself.
