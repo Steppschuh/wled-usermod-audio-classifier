@@ -217,8 +217,10 @@ private:
   RollingBuffer<FEATURE_BUFFER_SIZE> bassBuffer;
   RollingBuffer<FEATURE_BUFFER_SIZE> lowFreqBuffer; // Low frequency variance buffer (bands 0 & 1)
   RollingBuffer<FEATURE_BUFFER_SIZE> spreadBuffer;
+  RollingBuffer<FEATURE_BUFFER_SIZE> beatProbBuffer; // 1.5s sliding window for smoothed beat probability
   RollingBuffer<8> beatDelayBuffer; // Last 8 beat intervals (2 bars)
 
+  float instBeatProbability = 0.0f;
   float beatProbability = 0.0f;
   uint32_t frameDtMs = 20;
 

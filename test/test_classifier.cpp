@@ -891,6 +891,78 @@ void test_irregular_bass_impacts_do_not_yield_high_beat_probability(void) {
                            "Chaotic/irregular bass impacts must not produce high beat probability (<= 0.40)");
 }
 
+void test_verse_vocal_masking_does_not_cause_single_update_beat_probability_drop(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.onDelayMs = 400;
+  AudioClassifier classifier(cfg);
+  AudioFrame frame;
+
+  // 1. Establish steady 120 BPM (500ms interval) verse groove for 6 seconds
+  for (uint32_t t = 0; t <= 6000; t += 20) {
+    frame.timestampMs = t;
+    bool isKick = (t % 500) < 40;
+    frame.levelPercent = isKick ? 34.0f : 22.0f;
+    frame.rawVolume = isKick ? 85.0f : 52.0f;
+    frame.smoothedVolume = 58.0f;
+    frame.isPeak = isKick;
+    frame.majorPeakHz = 75.0f;
+
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 12;
+    if (isKick) {
+      frame.bands[0] = 95;
+      frame.bands[1] = 85;
+      frame.bands[2] = 45;
+    } else {
+      frame.bands[0] = 16;
+      frame.bands[1] = 18;
+      frame.bands[2] = 22;
+    }
+    classifier.processFrame(frame);
+  }
+
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
+  TEST_ASSERT_TRUE_MESSAGE(classifier.getBeatProbability() >= 0.75f, "Steady verse groove should establish >= 0.75 beat probability");
+
+  // 2. Simulate 2 missing beats (1.0s vocal masking window: t = 6020..6980) where loud vocal mids overpower
+  // the kick transient and soften the detected bass peaks, followed by normal groove resumption (t = 7000..9500).
+  float minObservedProb = 1.0f;
+  for (uint32_t t = 6020; t <= 9500; t += 20) {
+    frame.timestampMs = t;
+    bool isKick = (t % 500) < 40;
+    bool inVocalMaskWindow = (t < 7000);
+
+    frame.levelPercent = isKick ? 30.0f : 22.0f;
+    frame.rawVolume = isKick ? 75.0f : 52.0f;
+    frame.smoothedVolume = 58.0f;
+    frame.isPeak = isKick;
+    frame.majorPeakHz = inVocalMaskWindow ? 320.0f : 75.0f;
+
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 12;
+    if (inVocalMaskWindow) {
+      // Softened bass with overpowering vocal mids (bands 2..4 = 95 > bassAvg * 1.2)
+      frame.bands[0] = isKick ? 26 : 16;
+      frame.bands[1] = isKick ? 26 : 18;
+      frame.bands[2] = 95;
+      frame.bands[3] = 95;
+      frame.bands[4] = 90;
+    } else {
+      frame.bands[0] = isKick ? 95 : 16;
+      frame.bands[1] = isKick ? 85 : 18;
+      frame.bands[2] = isKick ? 45 : 22;
+    }
+
+    classifier.processFrame(frame);
+    if (classifier.getBeatProbability() < minObservedProb) {
+      minObservedProb = classifier.getBeatProbability();
+    }
+  }
+
+  // Sliding window averaging must prevent a single-update drop to a low percentage across 1-2 masked beats
+  TEST_ASSERT_TRUE_MESSAGE(minObservedProb >= 0.65f,
+                           "Beat probability must not drop to a low percentage during a 1s vocal-masked Verse passage");
+}
+
 void test_non_music_state_has_zero_energy_and_unknown_phrase_and_silence_clear_coupling(void) {
   ClassifierConfig cfg;
   cfg.onDelayMs = 500;
@@ -1527,6 +1599,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_moderate_volume_with_band1_kick_and_vocal_mids_detected);
   RUN_TEST(test_isolated_single_bass_hit_does_not_yield_high_beat_probability);
   RUN_TEST(test_irregular_bass_impacts_do_not_yield_high_beat_probability);
+  RUN_TEST(test_verse_vocal_masking_does_not_cause_single_update_beat_probability_drop);
   RUN_TEST(test_phrase_penalty_calculator_penalizes_rapid_phrase_churn);
   RUN_TEST(test_edm_macro_structure_phrase_progression_and_anti_churn);
   RUN_TEST(test_chorus_to_breakdown_does_not_flip_to_outro_one_second_later);

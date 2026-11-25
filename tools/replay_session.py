@@ -191,8 +191,10 @@ class SimulatedAudioClassifier:
         self.bass_buffer = RollingBuffer(75)
         self.low_freq_buffer = RollingBuffer(75)
         self.spread_buffer = RollingBuffer(75)
+        self.beat_prob_buffer = RollingBuffer(75)
         self.beat_delay_buffer = RollingBuffer(8)
 
+        self.inst_beat_probability = 0.0
         self.beat_probability = 0.0
         self.frame_dt_ms = 20
 
@@ -290,7 +292,9 @@ class SimulatedAudioClassifier:
             self.duration_between_beats = 0
             self.duration_between_bars = 0
             self.duration_between_phrases = 0
+            self.inst_beat_probability = 0.0
             self.beat_probability = 0.0
+            self.beat_prob_buffer.reset()
         else:
             self._update_music_and_phrasing(now, lvl, raw, smth, pk, hz, mag, bands)
             if self.semantic_state == "silence":
@@ -459,9 +463,11 @@ class SimulatedAudioClassifier:
         b4 = bands[4] if num_bands > 4 else 0
 
         # Middleground bass onset requirement:
-        # Accept punchy sub-bass (b0 >= 35) OR punchy mid-bass (b1 >= 40) OR combined bass (b0 + b1 >= 60)
-        has_bass = (b0 >= 35 or b1 >= 40 or (b0 + b1) >= 60) and (
-            bass_ratio >= 0.22 or (bass_flux >= 20.0 and bass_ratio >= 0.18)
+        # Accept punchy sub-bass (b0 >= 35) OR punchy mid-bass (b1 >= 40) OR combined bass (b0 + b1 >= 60),
+        # AND bass must make up a reasonable portion of total spectrum (>= 22%) or have strong positive onset flux (>= 20).
+        has_bass = (
+            (b0 >= 35 or b1 >= 40 or (b0 + b1) >= 60)
+            and (bass_ratio >= 0.22 or (bass_flux >= 20.0 and bass_ratio >= 0.18))
         )
 
         mid_avg = float(b2 + b3 + b4) / 3.0
@@ -550,7 +556,8 @@ class SimulatedAudioClassifier:
                     if 250 <= norm_interval_ms <= 750:
                         self.beat_delay_buffer.add(float(norm_interval_ms // 10))
                         self.beat_delay_buffer.calculate()
-                        if self.beat_delay_buffer.count >= 4 and self.beat_delay_buffer.std_dev < 14.0:
+                        max_delay_std_dev = 10.0 if (self.raw_bpm <= 0.0 or self.beats_per_minute == 0) else 14.0
+                        if self.beat_delay_buffer.count >= 4 and self.beat_delay_buffer.std_dev < max_delay_std_dev:
                             avg_interval_ms = self.beat_delay_buffer.mean * 10.0
                             if 250.0 <= avg_interval_ms <= 1000.0:
                                 cur_bpm = int(round(60000.0 / avg_interval_ms))
@@ -766,122 +773,128 @@ class SimulatedAudioClassifier:
                 self.phrase_state = "unknown"
 
         # 9. Dedicated Music Beat Probability (computed before phrasing so current frame's beat probability is active)
+        # Pure signal-driven & sliding-window averaged: independent of phrase_state or bpm_lock_count
         if self.presence == "quiet" or self.semantic_state != "music":
+            self.inst_beat_probability = 0.0
             self.beat_probability = 0.0
+            self.beat_prob_buffer.reset()
         else:
             span = self.low_freq_buffer.max_val - self.low_freq_buffer.min_val
             m = self.low_freq_buffer.mean
             std_dev = self.low_freq_buffer.std_dev
-            dt_beat = (now - self.last_beat_timestamp) if self.last_beat_timestamp > 0 else 99999
-
-            has_current_bass = (b0 >= 28 or b1 >= 32)
-            has_window_bass = (self.low_freq_buffer.max_val >= 28.0 and (dt_beat <= 1500 or m >= 14.0))
-            has_bass_energy = has_current_bass or has_window_bass or m >= 18.0 or span >= 20.0
 
             dt_factor = (float(self.frame_dt_ms) / 25.0) if (0 < self.frame_dt_ms <= 200) else 1.0
             dt_factor = max(0.5, min(1.25, dt_factor))
 
-            if not has_bass_energy or std_dev < 2.5 or span < 10.0 or dt_beat > 2500:
-                base_decay = 0.75 if (dt_beat > 1800 or self.low_freq_buffer.max_val < 20.0) else 0.90
-                self.beat_probability *= (base_decay ** dt_factor)
-                if self.beat_probability < 0.02:
-                    self.beat_probability = 0.0
+            var_factor = max(0.0, min(1.0, (std_dev - 2.8) / 7.5))
+            span_factor = max(0.0, min(1.0, (span - 12.0) / 34.0))
+
+            mean_factor = max(0.0, min(1.0, (m - 12.0) / 14.0))
+            rel_loud = max(0.0, min(1.0, (self.average_loudness_percent - 34.0) / 30.0))
+            abs_loud = max(0.0, min(1.0, (self.loudness_buffer.rms - (self.noise_floor + 3.5)) / 9.5))
+            loud_factor = min(abs_loud, max(rel_loud, mean_factor * 0.90))
+
+            bass_env = ((var_factor * 0.45) + (span_factor * 0.35) + (mean_factor * 0.20)) * mean_factor * loud_factor
+            inv_env = 1.0 - max(0.0, min(1.0, bass_env * 1.60))
+            mod_score = 1.0 - (inv_env * inv_env * inv_env)
+
+            weighted_beats = 0.0
+            for bt in self.beat_times:
+                if bt > 0 and now >= bt:
+                    age = now - bt
+                    if age <= 2400:
+                        weighted_beats += 1.0
+                    elif age <= 4000:
+                        weighted_beats += 1.0 - (float(age - 2400) / 1600.0)
+
+            recent_intervals = []
+            for i in range(1, self.beat_count):
+                if len(recent_intervals) >= 8:
+                    break
+                curr_idx = (self.beat_idx + 16 - i) % 16
+                prev_idx = (self.beat_idx + 16 - i - 1) % 16
+                t_curr = self.beat_times[curr_idx]
+                t_prev = self.beat_times[prev_idx]
+                if t_curr == 0 or t_prev == 0 or t_curr <= t_prev or (now - t_curr) > 4800:
+                    break
+                dt = t_curr - t_prev
+                if 220 <= dt <= 1800:
+                    recent_intervals.append(float(dt))
+
+            num_intervals = len(recent_intervals)
+            if weighted_beats < 0.2:
+                rhythm_score = 0.0
+            elif num_intervals == 0 or weighted_beats <= 1.05:
+                rhythm_score = 0.15 * min(1.0, weighted_beats)
+            elif num_intervals == 1:
+                dt0 = recent_intervals[0]
+                in_band = 1.0 if (280.0 <= dt0 <= 950.0) else 0.5
+                rhythm_score = 0.35 * in_band * min(1.0, weighted_beats * 0.5)
             else:
-                var_factor = max(0.0, min(1.0, (std_dev - 2.5) / 5.0))
-                span_factor = max(0.0, min(1.0, (span - 12.0) / 25.0))
-                rel_mod = std_dev / (m + 8.0)
-                mod_factor = max(0.0, min(1.0, (rel_mod - 0.12) / 0.25))
-                level_factor = max(0.0, min(1.0, (m - 12.0) / 28.0))
-                dyn_level_factor = max(level_factor, mod_factor * 0.85)
+                best_cluster_score = 0.0
+                for base_dt in recent_intervals:
+                    cands = [base_dt]
+                    if base_dt >= 520.0:
+                        cands.append(base_dt * 0.5)
+                    if base_dt >= 780.0:
+                        cands.append(base_dt / 3.0)
+                    for T in cands:
+                        if T < 250.0 or T > 850.0:
+                            continue
+                        matched = 0.0
+                        for dt in recent_intervals:
+                            e1 = abs(dt - T) / T
+                            e2 = (abs(dt - 2.0 * T) / (2.0 * T)) * 1.18
+                            e3 = (abs(dt - 3.0 * T) / (3.0 * T)) * 1.35
+                            e = min(e1, e2, e3)
+                            if e <= 0.22:
+                                matched += 1.0 - (e / 0.34)
+                        score = matched / float(num_intervals)
+                        if score > best_cluster_score:
+                            best_cluster_score = score
 
-                full_recency_ms = max(1200, (self.duration_between_beats * 5) // 2) if self.duration_between_beats > 0 else 1200
-                if full_recency_ms > 1600:
-                    full_recency_ms = 1600
-                max_recency_ms = full_recency_ms + 1000
+                consec_matches = 0
+                for k in range(num_intervals - 1):
+                    a, b = recent_intervals[k], recent_intervals[k + 1]
+                    r = max(a, b) / max(1.0, min(a, b))
+                    if r <= 1.30 or abs(r - 2.0) <= 0.26:
+                        consec_matches += 1
+                consec_ratio = (float(consec_matches) / float(num_intervals - 1)) if num_intervals > 1 else 1.0
+                eff_cluster = best_cluster_score * (0.20 + 0.80 * consec_ratio)
 
-                recency = 0.0
-                if dt_beat <= full_recency_ms:
-                    recency = 1.0
-                elif dt_beat <= max_recency_ms:
-                    recency = 1.0 - (float(dt_beat - full_recency_ms) / 1000.0)
-
-                recent_beats = sum(1 for bt in self.beat_times if bt > 0 and (now - bt) <= 3000)
-                has_locked_tempo = (self.beats_per_minute > 0 and self.bpm_lock_count >= 3 and 250 <= self.duration_between_beats <= 780)
-                rhythm_factor = 0.0
-                if recent_beats == 0:
-                    rhythm_factor = 0.0
-                elif recent_beats == 1:
-                    rhythm_factor = 0.15
+                density = max(0.0, min(1.0, (weighted_beats - 1.0) / 2.2))
+                if eff_cluster >= 0.54:
+                    reg = 0.85 + 0.15 * ((eff_cluster - 0.54) / 0.46)
+                elif eff_cluster <= 0.36:
+                    reg = 0.16
                 else:
-                    recent_intervals = []
-                    for i in range(1, self.beat_count):
-                        if len(recent_intervals) >= 8:
-                            break
-                        curr_idx = (self.beat_idx + 16 - i) % 16
-                        prev_idx = (self.beat_idx + 16 - i - 1) % 16
-                        t_curr = self.beat_times[curr_idx]
-                        t_prev = self.beat_times[prev_idx]
-                        if t_curr == 0 or t_prev == 0 or t_curr <= t_prev or (now - t_curr) > 4500:
-                            break
-                        dt = t_curr - t_prev
-                        if 220 <= dt <= 1600:
-                            recent_intervals.append(float(dt))
+                    reg = 0.16 + 0.69 * ((eff_cluster - 0.36) / 0.18)
+                rhythm_score = reg * (0.45 + 0.55 * density)
 
-                    num_intervals = len(recent_intervals)
-                    if num_intervals == 0:
-                        rhythm_factor = 0.20
-                    elif num_intervals == 1:
-                        if has_locked_tempo:
-                            locked_dt = float(self.duration_between_beats)
-                            dt = recent_intervals[0]
-                            matches_grid = (abs(dt - locked_dt) <= locked_dt * 0.20) or (abs(dt - 2.0 * locked_dt) <= locked_dt * 0.35)
-                            rhythm_factor = 0.85 if matches_grid else 0.40
-                        else:
-                            rhythm_factor = 0.38
-                    else:
-                        norm_intervals = []
-                        if has_locked_tempo:
-                            locked_dt = float(self.duration_between_beats)
-                            for dt in recent_intervals:
-                                if abs(dt - 2.0 * locked_dt) <= locked_dt * 0.32:
-                                    norm_intervals.append(dt * 0.5)
-                                elif abs(dt - 3.0 * locked_dt) <= locked_dt * 0.40:
-                                    norm_intervals.append(dt / 3.0)
-                                else:
-                                    norm_intervals.append(dt)
-                        else:
-                            norm_intervals = list(recent_intervals)
+            target_prob = mod_score * rhythm_score
+            if num_intervals == 0 and target_prob > 0.15:
+                target_prob = 0.15
+            target_prob = max(0.0, min(1.0, target_prob))
 
-                        norm_mean = sum(norm_intervals) / float(num_intervals)
-                        norm_var = sum((x - norm_mean) ** 2 for x in norm_intervals) / float(num_intervals)
-                        norm_cv = math.sqrt(norm_var) / (norm_mean + 1.0)
+            if mod_score < 0.12:
+                alpha = 1.0 - (0.55 ** dt_factor)
+            elif target_prob < self.inst_beat_probability:
+                alpha = 1.0 - (0.78 ** dt_factor)
+            else:
+                alpha = 1.0 - (0.85 ** dt_factor)
+            self.inst_beat_probability = (self.inst_beat_probability * (1.0 - alpha)) + (target_prob * alpha)
+            if self.inst_beat_probability < 0.02:
+                self.inst_beat_probability = 0.0
 
-                        if norm_cv <= 0.14:
-                            rhythm_factor = 1.0 if has_locked_tempo else 0.92
-                        elif norm_cv >= 0.32:
-                            rhythm_factor = 0.18
-                        else:
-                            top = 1.0 if has_locked_tempo else 0.92
-                            rhythm_factor = top - (top - 0.18) * ((norm_cv - 0.14) / 0.18)
-
-                        if has_locked_tempo and recent_beats >= 3 and norm_cv <= 0.38:
-                            locked_floor = max(0.82, self.beat_regularity)
-                            if rhythm_factor < locked_floor:
-                                rhythm_factor = locked_floor
-
-                mod_raw = max(0.0, min(1.0, (var_factor * 0.45) + (span_factor * 0.35) + (dyn_level_factor * 0.20)))
-                inv_mod = 1.0 - mod_raw
-                mod_curve = 1.0 - (inv_mod * inv_mod * inv_mod)
-
-                target_prob = mod_curve * rhythm_factor * recency
-                if recent_beats == 1 and target_prob > 0.15:
-                    target_prob = 0.15
-                target_prob = max(0.0, min(1.0, target_prob))
-
-                alpha = (1.0 - (0.75 ** dt_factor)) if target_prob < self.beat_probability else (1.0 - (0.85 ** dt_factor))
-                self.beat_probability = (self.beat_probability * (1.0 - alpha)) + (target_prob * alpha)
-                if self.beat_probability < 0.02:
-                    self.beat_probability = 0.0
+            self.beat_prob_buffer.add(self.inst_beat_probability)
+            self.beat_prob_buffer.calculate()
+            dt_beat = (now - self.last_beat_timestamp) if self.last_beat_timestamp > 0 else 99999
+            env_gate = 1.0
+            if dt_beat > 1600 and self.average_loudness_percent < 32.0:
+                env_gate = min(1.0, max(mod_score * 2.5, self.inst_beat_probability * 1.5))
+            self.beat_probability = self.beat_prob_buffer.mean * env_gate
+            if self.beat_probability < 0.02:
+                self.beat_probability = 0.0
 
         # 10. Phrasing & SoundEnergy State Machine (Rave-Totem Algorithm with Hysteresis & Dwell Guards)
         if self.semantic_state == "music":
@@ -973,7 +986,7 @@ class SimulatedAudioClassifier:
                 or (self.peak_1s_level < 12.0 and self.average_1s_level < 8.0)
             ) and (low_volume_dur_ms >= 800 or self.loudness_buffer.rms < (self.noise_floor + 6.0))
             no_beats_recent = (duration_since_last_beat > 1200 or bars_without_beats >= 1)
-            has_active_beat_groove = (bars_without_beats == 0) and (duration_since_last_beat <= (bar_dur * 5 // 4)) and (self.beat_probability >= 0.25 or constant_beats)
+            has_active_beat_groove = (bars_without_beats == 0) and (duration_since_last_beat <= (bar_dur * 5 // 4)) and (self.inst_beat_probability >= 0.25 or constant_beats)
 
             can_enter_chorus = (
                 (smooth_peak >= 48.0 and smooth_avg >= 32.0 and self.current_level >= 24.0 and bass_trend >= 0.85)
@@ -983,7 +996,7 @@ class SimulatedAudioClassifier:
 
             can_enter_verse_from_low = (
                 has_active_beat_groove
-                and (self.beat_probability >= 0.40)
+                and (self.inst_beat_probability >= 0.40)
                 and (duration_since_last_beat <= 1000)
                 and (smooth_avg >= max(self.noise_floor + 7.5, 11.0))
                 and (self.loudness_buffer.rms >= 10.5)
