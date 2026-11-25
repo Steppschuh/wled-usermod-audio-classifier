@@ -261,6 +261,7 @@ public:
       std::string state;
       std::string phrase;
       uint16_t bpm = 0;
+      float beatProb = 0.0f;
     };
     std::map<uint32_t, SecondSnap> snapshots;
     uint32_t lastSnapSec = 999999;
@@ -314,6 +315,7 @@ public:
         snap.state = normalizeStr(classifier.getSemanticStateStr());
         snap.phrase = normalizeStr(classifier.getPhraseStateStr());
         snap.bpm = classifier.getBPM();
+        snap.beatProb = classifier.getBeatProbability();
         snapshots[curSec] = snap;
 
         if (!prevState.empty() && snap.state != prevState) stateFlips++;
@@ -475,6 +477,10 @@ public:
       float sumBpmErrors = 0.0f;
       size_t bpmEvalCount = 0;
       size_t phrEvalCount = 0;
+      float sumActiveBeatProb = 0.0f;
+      size_t activeBeatProbCount = 0;
+      float sumQuietPhraseBeatProb = 0.0f;
+      size_t quietPhraseBeatProbCount = 0;
       size_t totalSecs = snapshots.size();
 
       for (const auto& kv : snapshots) {
@@ -550,6 +556,17 @@ public:
               bpmEvalCount++;
             }
           }
+
+          // Continuous Beat Probability evaluation across active rhythm vs quiet breakdown/outro segments
+          if (!inSlack && sec >= 3) {
+            if (expPhrase == "chorus" || expPhrase == "verse") {
+              sumActiveBeatProb += snap.beatProb;
+              activeBeatProbCount++;
+            } else if (expPhrase == "breakdown" || expPhrase == "outro") {
+              sumQuietPhraseBeatProb += snap.beatProb;
+              quietPhraseBeatProbCount++;
+            }
+          }
         }
       }
 
@@ -575,6 +592,21 @@ public:
                 << "   🎼 Phrase Anti-Churn: " << phraseMetrics.stabilityScore << "% (Penalty: -" << phraseMetrics.penaltyScore << ", Micro-Flips: " << phraseMetrics.microFlips << ", Ping-Pongs: " << phraseMetrics.pingPongs << ")\n";
       if (groundTruthBpm > 0.0f) {
         std::cout << "   🎵 BPM Accuracy: " << bpmAcc << "% | MAE: " << bpmMae << " BPM (Ground Truth: " << groundTruthBpm << " BPM, Evaluated: " << bpmEvalCount << "s)\n";
+      }
+      if (activeBeatProbCount > 0 || quietPhraseBeatProbCount > 0) {
+        float avgActiveProb = (activeBeatProbCount > 0) ? (sumActiveBeatProb / (float)activeBeatProbCount) : 0.0f;
+        float avgQuietProb = (quietPhraseBeatProbCount > 0) ? (sumQuietPhraseBeatProb / (float)quietPhraseBeatProbCount) : 0.0f;
+        std::cout << "   🥁 Beat Prob Separation: Active (Chorus/Verse) avg=" << (avgActiveProb * 100.0f)
+                  << "% (" << activeBeatProbCount << "s) | Quiet (Breakdown/Outro) avg=" << (avgQuietProb * 100.0f)
+                  << "% (" << quietPhraseBeatProbCount << "s)\n";
+        if (groundTruthBpm > 0.0f) {
+          if (activeBeatProbCount >= 10) {
+            TEST_ASSERT_TRUE_MESSAGE(avgActiveProb >= 0.60f, "Average beat probability in Chorus/Verse segments dropped below 60%!");
+          }
+          if (quietPhraseBeatProbCount >= 10) {
+            TEST_ASSERT_TRUE_MESSAGE(avgQuietProb <= 0.20f, "Average beat probability in Breakdown/Outro segments exceeded 20%!");
+          }
+        }
       }
       std::cout << "========================================================================================\n";
 

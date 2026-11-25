@@ -53,9 +53,9 @@ void AudioClassifier::reset() {
   bassBuffer.reset();
   lowFreqBuffer.reset();
   spreadBuffer.reset();
-  beatFeatureBuffer.reset();
   beatDelayBuffer.reset();
   beatProbability = 0.0f;
+  frameDtMs = 20;
 
   maxLoudness = 20.0f;
   decayedMaxLoudness = 20.0f;
@@ -204,6 +204,7 @@ void AudioClassifier::processFrame(const AudioFrame& frame) {
   if (now == lastFrameTimeMs && lastFrameTimeMs > 0) {
     return; // de-duplicate identical packets
   }
+  frameDtMs = (lastFrameTimeMs > 0 && now > lastFrameTimeMs) ? (now - lastFrameTimeMs) : 20;
   lastFrameTimeMs = now;
 
   // 1. Smooth instantaneous level and track 1s peak
@@ -480,9 +481,6 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   }
   if (beatFeature > 100.0f) beatFeature = 100.0f;
 
-  beatFeatureBuffer.add(beatFeature);
-  beatFeatureBuffer.calculate();
-
   // 5. Phase-Locked Beat Expectation & Dynamic Adaptive Thresholding
   uint32_t durationSinceLastBeat = (lastBeatTimestamp > 0) ? (now - lastBeatTimestamp) : 10000;
 
@@ -670,6 +668,8 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
           if (beatRegularity < 0.85f) beatRegularity = 0.85f;
         } else if (cv < 0.40f) {
           if (beatRegularity < 0.55f) beatRegularity = 0.55f;
+        } else {
+          beatRegularity *= 0.75f;
         }
       }
     }
@@ -819,17 +819,28 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   if (presence == SoundPresence::QUIET || semanticState != AudioSemanticState::MUSIC) {
     beatProbability = 0.0f;
   } else {
-    // Music state: must have active low-frequency transients and variance
+    // Music state: evaluate low-frequency modulation, tempo-relative beat recency, and interval regularity
     float span = lowFreqBuffer.maxVal - lowFreqBuffer.minVal;
     float m = lowFreqBuffer.mean;
     float stdDev = lowFreqBuffer.stdDev;
-    bool hasBassEnergy = (frame.bands[0] >= 28 || frame.bands[1] >= 32 || m >= 18.0f || span >= 20.0f);
     uint32_t dtBeat = (lastBeatTimestamp > 0) ? (now - lastBeatTimestamp) : 99999;
 
+    // Sustained bass presence across the 1.5s rolling window (avoids inter-beat collapse on moderate-volume grooves)
+    bool hasCurrentBass = (frame.bands[0] >= 28 || frame.bands[1] >= 32);
+    bool hasWindowBass = (lowFreqBuffer.maxVal >= 28.0f && (dtBeat <= 1500 || m >= 14.0f));
+    bool hasBassEnergy = hasCurrentBass || hasWindowBass || m >= 18.0f || span >= 20.0f;
+
+    // Time-normalized smoothing step (clamped near nominal 20-25ms so 40ms MQTT frames don't over-decay between beats)
+    float dtFactor = (frameDtMs > 0 && frameDtMs <= 200) ? ((float)frameDtMs / 25.0f) : 1.0f;
+    if (dtFactor < 0.5f) dtFactor = 0.5f;
+    if (dtFactor > 1.25f) dtFactor = 1.25f;
+
     if (!hasBassEnergy || stdDev < 2.5f || span < 10.0f || dtBeat > 2500) {
-      beatProbability *= 0.75f;
+      float baseDecay = (dtBeat > 1800 || lowFreqBuffer.maxVal < 20.0f) ? 0.75f : 0.90f;
+      beatProbability *= powf(baseDecay, dtFactor);
       if (beatProbability < 0.02f) beatProbability = 0.0f;
     } else {
+      // 9a. Low-frequency transient modulation score (amplitude-invariant + dynamic span)
       float varFactor = (stdDev - 2.5f) / 5.0f;
       if (varFactor < 0.0f) varFactor = 0.0f;
       if (varFactor > 1.0f) varFactor = 1.0f;
@@ -838,20 +849,33 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       if (spanFactor < 0.0f) spanFactor = 0.0f;
       if (spanFactor > 1.0f) spanFactor = 1.0f;
 
+      // Relative modulation (CV of low-frequency energy) so quiet/adjacent-room grooves aren't penalized by raw mean
+      float relMod = stdDev / (m + 8.0f);
+      float modFactor = (relMod - 0.12f) / 0.25f;
+      if (modFactor < 0.0f) modFactor = 0.0f;
+      if (modFactor > 1.0f) modFactor = 1.0f;
+
       float levelFactor = (m - 12.0f) / 28.0f;
       if (levelFactor < 0.0f) levelFactor = 0.0f;
       if (levelFactor > 1.0f) levelFactor = 1.0f;
 
+      float dynLevelFactor = fmaxf(levelFactor, modFactor * 0.85f);
+
+      // 9b. Tempo-aware beat recency
+      uint32_t fullRecencyMs = (durationBetweenBeats > 0)
+                               ? (uint32_t)fmaxf(1200.0f, (float)(durationBetweenBeats * 5 / 2))
+                               : 1200;
+      if (fullRecencyMs > 1600) fullRecencyMs = 1600;
+      uint32_t maxRecencyMs = fullRecencyMs + 1000;
+
       float recency = 0.0f;
-      if (dtBeat <= 1200) {
+      if (dtBeat <= fullRecencyMs) {
         recency = 1.0f;
-      } else if (dtBeat <= 2200) {
-        recency = 1.0f - ((float)(dtBeat - 1200) / 1000.0f);
+      } else if (dtBeat <= maxRecencyMs) {
+        recency = 1.0f - ((float)(dtBeat - fullRecencyMs) / 1000.0f);
       }
 
-      float targetProb = varFactor * (spanFactor * 0.40f + levelFactor * 0.25f + recency * 0.35f);
-
-      // Require at least 2 beats within 3 seconds to establish a true rhythmic groove
+      // 9c. Recent beat count & inter-beat interval regularity (rejects random/chaotic bass impacts)
       uint8_t recentBeatsCount = 0;
       for (size_t i = 0; i < MAX_BEATS; i++) {
         if (beatTimes[i] > 0 && (now - beatTimes[i]) <= 3000) {
@@ -859,24 +883,113 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
         }
       }
 
+      bool hasLockedTempo = (beatsPerMinute > 0 && bpmLockCount >= 3 && durationBetweenBeats >= 250 && durationBetweenBeats <= 780);
+      float rhythmFactor = 0.0f;
       if (recentBeatsCount == 0) {
-        targetProb = 0.0f;
+        rhythmFactor = 0.0f;
       } else if (recentBeatsCount == 1) {
-        if (targetProb > 0.15f) targetProb = 0.15f;
+        rhythmFactor = 0.15f;
       } else {
-        if (varFactor > 0.35f && spanFactor > 0.35f && recency > 0.5f) {
-          float boost = 0.70f + 0.30f * varFactor;
-          if (boost > targetProb) targetProb = boost;
+        // Extract recent consecutive beat intervals within the last 4.5s
+        float recentIntervals[MAX_BEATS - 1];
+        size_t numIntervals = 0;
+        float sumAll = 0.0f;
+
+        for (size_t i = 1; i < beatCount && numIntervals < 8; i++) {
+          size_t currIdx = (beatIdx + MAX_BEATS - i) % MAX_BEATS;
+          size_t prevIdx = (beatIdx + MAX_BEATS - i - 1) % MAX_BEATS;
+          uint32_t tCurr = beatTimes[currIdx];
+          uint32_t tPrev = beatTimes[prevIdx];
+          if (tCurr == 0 || tPrev == 0 || tCurr <= tPrev || (now - tCurr) > 4500) break;
+          uint32_t dt = tCurr - tPrev;
+          if (dt >= 220 && dt <= 1600) {
+            float fdt = (float)dt;
+            recentIntervals[numIntervals++] = fdt;
+            sumAll += fdt;
+          }
         }
+
+        if (numIntervals == 0) {
+          rhythmFactor = 0.20f;
+        } else if (numIntervals == 1) {
+          // 2 beats (1 interval): only boost if it matches an already-locked track tempo
+          if (hasLockedTempo) {
+            float lockedDt = (float)durationBetweenBeats;
+            float dt = recentIntervals[0];
+            bool matchesGrid = (fabsf(dt - lockedDt) <= lockedDt * 0.20f) ||
+                               (fabsf(dt - 2.0f * lockedDt) <= lockedDt * 0.35f);
+            rhythmFactor = matchesGrid ? 0.85f : 0.40f;
+          } else {
+            rhythmFactor = 0.38f;
+          }
+        } else {
+          float normSum = 0.0f;
+          float normIntervals[MAX_BEATS - 1];
+
+          if (hasLockedTempo) {
+            // Tempo is locked: normalize single/double skipped beats (k=2, 3) only if they align with the locked beat grid
+            float lockedDt = (float)durationBetweenBeats;
+            for (size_t i = 0; i < numIntervals; i++) {
+              float dt = recentIntervals[i];
+              if (fabsf(dt - 2.0f * lockedDt) <= lockedDt * 0.32f) {
+                normIntervals[i] = dt * 0.5f;
+              } else if (fabsf(dt - 3.0f * lockedDt) <= lockedDt * 0.40f) {
+                normIntervals[i] = dt / 3.0f;
+              } else {
+                normIntervals[i] = dt;
+              }
+              normSum += normIntervals[i];
+            }
+          } else {
+            // Tempo not locked yet: evaluate raw interval consistency without harmonic folding
+            for (size_t i = 0; i < numIntervals; i++) {
+              normIntervals[i] = recentIntervals[i];
+              normSum += normIntervals[i];
+            }
+          }
+
+          float normMean = normSum / (float)numIntervals;
+          float normVar = 0.0f;
+          for (size_t i = 0; i < numIntervals; i++) {
+            float nd = normIntervals[i] - normMean;
+            normVar += nd * nd;
+          }
+          float normCv = sqrtf(normVar / (float)numIntervals) / (normMean + 1.0f);
+
+          if (normCv <= 0.14f) {
+            rhythmFactor = hasLockedTempo ? 1.0f : 0.92f;
+          } else if (normCv >= 0.32f) {
+            rhythmFactor = 0.18f;
+          } else {
+            float top = hasLockedTempo ? 1.0f : 0.92f;
+            rhythmFactor = top - (top - 0.18f) * ((normCv - 0.14f) / 0.18f);
+          }
+
+          if (hasLockedTempo && recentBeatsCount >= 3 && normCv <= 0.38f) {
+            float lockedFloor = fmaxf(0.82f, beatRegularity);
+            if (rhythmFactor < lockedFloor) rhythmFactor = lockedFloor;
+          }
+        }
+      }
+
+      // 9d. Continuous smooth combination (cubic saturation f(x) = 1 - (1 - x)^3, no step-boost cliff)
+      float modRaw = (varFactor * 0.45f) + (spanFactor * 0.35f) + (dynLevelFactor * 0.20f);
+      if (modRaw < 0.0f) modRaw = 0.0f;
+      if (modRaw > 1.0f) modRaw = 1.0f;
+      float invMod = 1.0f - modRaw;
+      float modCurve = 1.0f - (invMod * invMod * invMod);
+
+      float targetProb = modCurve * rhythmFactor * recency;
+      if (recentBeatsCount == 1 && targetProb > 0.15f) {
+        targetProb = 0.15f;
       }
       if (targetProb < 0.0f) targetProb = 0.0f;
       if (targetProb > 1.0f) targetProb = 1.0f;
 
-      if (targetProb < beatProbability) {
-        beatProbability = (beatProbability * 0.75f) + (targetProb * 0.25f);
-      } else {
-        beatProbability = (beatProbability * 0.85f) + (targetProb * 0.15f);
-      }
+      float alpha = (targetProb < beatProbability)
+                    ? (1.0f - powf(0.75f, dtFactor))
+                    : (1.0f - powf(0.85f, dtFactor));
+      beatProbability = (beatProbability * (1.0f - alpha)) + (targetProb * alpha);
       if (beatProbability < 0.02f) beatProbability = 0.0f;
     }
   }

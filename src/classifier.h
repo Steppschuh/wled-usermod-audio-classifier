@@ -217,10 +217,10 @@ private:
   RollingBuffer<FEATURE_BUFFER_SIZE> bassBuffer;
   RollingBuffer<FEATURE_BUFFER_SIZE> lowFreqBuffer; // Low frequency variance buffer (bands 0 & 1)
   RollingBuffer<FEATURE_BUFFER_SIZE> spreadBuffer;
-  RollingBuffer<FEATURE_BUFFER_SIZE> beatFeatureBuffer;
   RollingBuffer<8> beatDelayBuffer; // Last 8 beat intervals (2 bars)
 
   float beatProbability = 0.0f;
+  uint32_t frameDtMs = 20;
 
   float maxLoudness = 20.0f;
   float decayedMaxLoudness = 20.0f;

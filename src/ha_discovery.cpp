@@ -464,14 +464,10 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
     snprintf(pkBuf, sizeof(pkBuf), "%.1f", classifier.getPeakLevelPercent());
     mqtt->publish((base + "peak").c_str(), 0, false, pkBuf);
 
-    char probBuf[16];
-    snprintf(probBuf, sizeof(probBuf), "%.1f", classifier.getBeatProbabilityPercent());
-    mqtt->publish((base + "beat_probability").c_str(), 0, false, probBuf);
-
     publishedAny = true;
   }
 
-  // Publish 1 Hz + On change + Heartbeat metrics (energy and bpm)
+  // Publish 1 Hz + On change + Heartbeat metrics (energy, bpm, and beat_probability)
   if (force || timeForLevel || stateChanged || timeForHeartbeat) {
     char nrgBuf[8];
     snprintf(nrgBuf, sizeof(nrgBuf), "%u", soundEnergy);
@@ -480,6 +476,10 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
     char bpmBuf[8];
     snprintf(bpmBuf, sizeof(bpmBuf), "%u", bpm);
     mqtt->publish((base + "bpm").c_str(), 0, false, bpmBuf);
+
+    char probBuf[16];
+    snprintf(probBuf, sizeof(probBuf), "%.1f", classifier.getBeatProbabilityPercent());
+    mqtt->publish((base + "beat_probability").c_str(), 0, false, probBuf);
 
     publishedAny = true;
   }

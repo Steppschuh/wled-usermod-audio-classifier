@@ -509,15 +509,88 @@ void test_music_beat_probability(void) {
   TEST_ASSERT_TRUE(classifier.getBeatProbability() <= 0.15f);
 }
 
-void test_recorded_session_beat_probability(void) {
+void test_beat_probability_inter_beat_stability_and_smooth_progression(void) {
   ClassifierConfig cfg;
   cfg.experimentalEnabled = true;
-  cfg.musicHoldMs = 30000;
+  cfg.onDelayMs = 400;
   AudioClassifier classifier(cfg);
+  AudioFrame frame;
 
-  // Replay 3-minute recording with beat probability assertions
-  bool ok = FixtureReplayer::replayAndVerify("test/fixtures/session_20261104_113800.json", classifier);
-  TEST_ASSERT_TRUE(ok);
+  // 1. Pre-warm into MUSIC state with a gentle harmonic pad (no beats yet)
+  for (uint32_t t = 0; t < 1500; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 20.0f;
+    frame.rawVolume = 50.0f;
+    frame.smoothedVolume = 50.0f;
+    frame.isPeak = false;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 10;
+    frame.bands[0] = 16;
+    frame.bands[1] = 16;
+    frame.bands[8] = 25;
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, classifier.getBeatProbability());
+
+  // 2. Introduce 96 BPM groove (625ms beat interval) with moderate bass kicks
+  // Track beat probability after 1st beat, 2nd beat, and 6th beat
+  float probAfterBeat1 = 0.0f;
+  float probAfterBeat2 = 0.0f;
+  float probOnBeat8 = 0.0f;
+  float probBeforeBeat9 = 0.0f;
+
+  uint32_t startBeats = 1500;
+  const uint32_t beatInterval = 625;
+  for (uint32_t t = startBeats; t <= startBeats + 6000; t += 20) {
+    uint32_t relT = t - startBeats;
+    uint32_t beatIndex = relT / beatInterval;
+    uint32_t phaseInBeat = relT % beatInterval;
+    bool isKick = (phaseInBeat < 40);
+
+    frame.timestampMs = t;
+    frame.levelPercent = isKick ? 32.0f : 18.0f;
+    frame.rawVolume = isKick ? 75.0f : 40.0f;
+    frame.smoothedVolume = 48.0f;
+    frame.isPeak = isKick;
+    frame.majorPeakHz = 75.0f;
+
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 8;
+    if (isKick) {
+      frame.bands[0] = 26;
+      frame.bands[1] = 72;
+      frame.bands[2] = 35;
+    } else {
+      frame.bands[0] = 10;
+      frame.bands[1] = 14;
+      frame.bands[2] = 15;
+    }
+    frame.bands[8] = 20;
+
+    classifier.processFrame(frame);
+
+    if (beatIndex == 0 && phaseInBeat >= 60 && probAfterBeat1 == 0.0f) {
+      probAfterBeat1 = classifier.getBeatProbability();
+    }
+    if (beatIndex == 1 && phaseInBeat >= 60 && probAfterBeat2 == 0.0f) {
+      probAfterBeat2 = classifier.getBeatProbability();
+    }
+    if (beatIndex == 7 && phaseInBeat >= 20 && phaseInBeat < 40) {
+      probOnBeat8 = classifier.getBeatProbability();
+    }
+    if (beatIndex == 7 && phaseInBeat >= 580 && phaseInBeat < 600) {
+      probBeforeBeat9 = classifier.getBeatProbability();
+    }
+  }
+
+  // Smooth progression: 1 beat <= 0.15 < 2 beats < locked groove (>= 0.75)
+  TEST_ASSERT_TRUE_MESSAGE(probAfterBeat1 <= 0.16f, "Beat probability after 1st beat must remain capped (<= 0.16)");
+  TEST_ASSERT_TRUE_MESSAGE(probAfterBeat2 > probAfterBeat1 && probAfterBeat2 <= 0.70f,
+                           "Beat probability after 2nd beat should rise smoothly without jumping immediately to 1.0");
+  TEST_ASSERT_TRUE_MESSAGE(probOnBeat8 >= 0.75f, "Locked 96 BPM groove must reach high beat probability (>= 0.75)");
+
+  // Inter-beat stability: probability must not collapse across the 625ms gap between beats
+  TEST_ASSERT_TRUE_MESSAGE(fabsf(probOnBeat8 - probBeforeBeat9) <= 0.12f,
+                           "Beat probability must remain stable across inter-beat gaps without sawtooth collapse");
 }
 
 void test_outlier_soft_bass_hit_before_drop_reverts(void) {
@@ -683,39 +756,139 @@ void test_moderate_volume_with_band1_kick_and_vocal_mids_detected(void) {
 void test_isolated_single_bass_hit_does_not_yield_high_beat_probability(void) {
   ClassifierConfig cfg;
   cfg.experimentalEnabled = true;
+  cfg.onDelayMs = 400;
+  cfg.musicHoldMs = 30000;
   AudioClassifier classifier(cfg);
   AudioFrame frame;
 
-  // 1. Initial 2 seconds of silence
-  for (uint32_t t = 0; t < 2000; t += 20) {
+  // 1. Establish active MUSIC state first so semanticState == MUSIC and presence == SOUND
+  uint32_t lastBeat = 0;
+  for (uint32_t t = 0; t <= 3000; t += 20) {
     frame.timestampMs = t;
-    frame.levelPercent = 2.0f;
-    frame.rawVolume = 5.0f;
-    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 0;
+    frame.levelPercent = 32.0f;
+    frame.rawVolume = 80.0f;
+    frame.smoothedVolume = 75.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 15;
+    if (t - lastBeat >= 500) {
+      frame.isPeak = true;
+      frame.bands[0] = 120;
+      frame.bands[1] = 100;
+      lastBeat = t;
+    } else {
+      frame.isPeak = false;
+    }
     classifier.processFrame(frame);
   }
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
 
-  // 2. One single isolated bass boom (sound effect or door slam)
-  frame.timestampMs = 2000;
-  frame.levelPercent = 35.0f;
-  frame.rawVolume = 70.0f;
+  // 2. Transition into 4 seconds of quiet breakdown (beats age out > 3000ms, while staying in MUSIC state)
+  for (uint32_t t = 3020; t < 7000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 12.0f;
+    frame.rawVolume = 28.0f;
+    frame.smoothedVolume = 28.0f;
+    frame.isPeak = false;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 5;
+    frame.bands[8] = 20;
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, classifier.getBeatProbability());
+
+  // 3. One single isolated bass boom while actively in MUSIC state
+  frame.timestampMs = 7000;
+  frame.levelPercent = 42.0f;
+  frame.rawVolume = 105.0f;
+  frame.smoothedVolume = 80.0f;
   frame.isPeak = true;
-  frame.bands[0] = 60;
-  frame.bands[1] = 80;
+  frame.bands[0] = 130;
+  frame.bands[1] = 110;
   classifier.processFrame(frame);
 
-  // 3. Followed by 1500ms of quiet audio
-  for (uint32_t t = 2020; t <= 3500; t += 20) {
+  float probImmediate = classifier.getBeatProbability();
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
+  TEST_ASSERT_TRUE_MESSAGE(probImmediate <= 0.16f, "Single isolated bass hit in MUSIC state must not exceed 0.16 beat probability");
+
+  // 4. Followed by 1500ms of non-percussive music pad
+  for (uint32_t t = 7020; t <= 8500; t += 20) {
     frame.timestampMs = t;
-    frame.levelPercent = 2.0f;
-    frame.rawVolume = 5.0f;
+    frame.levelPercent = 12.0f;
+    frame.rawVolume = 28.0f;
+    frame.smoothedVolume = 28.0f;
     frame.isPeak = false;
-    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 0;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 5;
+    frame.bands[8] = 20;
+    classifier.processFrame(frame);
+    TEST_ASSERT_TRUE_MESSAGE(classifier.getBeatProbability() <= 0.16f,
+                             "Beat probability after a single isolated bass hit must never exceed 0.16");
+  }
+}
+
+void test_irregular_bass_impacts_do_not_yield_high_beat_probability(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.onDelayMs = 400;
+  cfg.musicHoldMs = 30000;
+  AudioClassifier classifier(cfg);
+  AudioFrame frame;
+
+  // 1. Enter MUSIC state with a brief harmonic intro pad (no tempo lock)
+  for (uint32_t t = 0; t < 2000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 22.0f;
+    frame.rawVolume = 55.0f;
+    frame.smoothedVolume = 55.0f;
+    frame.isPeak = false;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 10;
+    frame.bands[0] = 18;
+    frame.bands[1] = 18;
+    frame.bands[8] = 28;
     classifier.processFrame(frame);
   }
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
 
-  // 1 isolated hit cannot establish a groove -> beat probability must be low (<= 0.20)
-  TEST_ASSERT_TRUE_MESSAGE(classifier.getBeatProbability() <= 0.20f, "Single isolated bass hit must not yield high beat probability");
+  // 2. Inject 6 strong bass impacts at chaotic, non-periodic timestamps:
+  // Intervals: 300ms, 820ms, 420ms, 1140ms, 340ms (high variance/span, poor grid regularity)
+  const uint32_t hitTimes[] = {2000, 2300, 3120, 3540, 4680, 5020};
+  const size_t numHits = sizeof(hitTimes) / sizeof(hitTimes[0]);
+  float maxObservedProb = 0.0f;
+
+  for (uint32_t t = 2000; t <= 5500; t += 20) {
+    bool isHit = false;
+    for (size_t i = 0; i < numHits; i++) {
+      if (t >= hitTimes[i] && t < hitTimes[i] + 40) {
+        isHit = true;
+        break;
+      }
+    }
+
+    frame.timestampMs = t;
+    frame.levelPercent = isHit ? 50.0f : 16.0f;
+    frame.rawVolume = isHit ? 130.0f : 38.0f;
+    frame.smoothedVolume = 55.0f;
+    frame.isPeak = isHit;
+    frame.majorPeakHz = 70.0f;
+
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 8;
+    if (isHit) {
+      frame.bands[0] = 150;
+      frame.bands[1] = 130;
+      frame.bands[2] = 60;
+    } else {
+      frame.bands[0] = 12;
+      frame.bands[1] = 12;
+    }
+    frame.bands[8] = 22;
+
+    classifier.processFrame(frame);
+    if (classifier.getBeatProbability() > maxObservedProb) {
+      maxObservedProb = classifier.getBeatProbability();
+    }
+  }
+
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
+  TEST_ASSERT_TRUE_MESSAGE(maxObservedProb <= 0.40f,
+                           "Chaotic/irregular bass impacts must not produce high beat probability (<= 0.40)");
 }
 
 void test_non_music_state_has_zero_energy_and_unknown_phrase_and_silence_clear_coupling(void) {
@@ -1348,11 +1521,12 @@ int main(int argc, char **argv) {
   RUN_TEST(test_replay_recorded_speech_session);
   RUN_TEST(test_1s_average_and_peak_tracking);
   RUN_TEST(test_music_beat_probability);
-  RUN_TEST(test_recorded_session_beat_probability);
+  RUN_TEST(test_beat_probability_inter_beat_stability_and_smooth_progression);
   RUN_TEST(test_outlier_soft_bass_hit_before_drop_reverts);
   RUN_TEST(test_outlier_missing_beat_in_phrase_reverts);
   RUN_TEST(test_moderate_volume_with_band1_kick_and_vocal_mids_detected);
   RUN_TEST(test_isolated_single_bass_hit_does_not_yield_high_beat_probability);
+  RUN_TEST(test_irregular_bass_impacts_do_not_yield_high_beat_probability);
   RUN_TEST(test_phrase_penalty_calculator_penalizes_rapid_phrase_churn);
   RUN_TEST(test_edm_macro_structure_phrase_progression_and_anti_churn);
   RUN_TEST(test_chorus_to_breakdown_does_not_flip_to_outro_one_second_later);

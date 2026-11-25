@@ -191,10 +191,10 @@ class SimulatedAudioClassifier:
         self.bass_buffer = RollingBuffer(75)
         self.low_freq_buffer = RollingBuffer(75)
         self.spread_buffer = RollingBuffer(75)
-        self.beat_feature_buffer = RollingBuffer(75)
         self.beat_delay_buffer = RollingBuffer(8)
 
         self.beat_probability = 0.0
+        self.frame_dt_ms = 20
 
         self.max_loudness = 20.0
         self.decayed_max_loudness = 20.0
@@ -252,6 +252,7 @@ class SimulatedAudioClassifier:
         # Frame deduplication
         if self.last_frame_time_ms > 0 and now <= self.last_frame_time_ms:
             return
+        self.frame_dt_ms = (now - self.last_frame_time_ms) if (self.last_frame_time_ms > 0 and now > self.last_frame_time_ms) else 20
         self.last_frame_time_ms = now
 
         # 1. Smooth instantaneous level and track 1s peak
@@ -479,9 +480,6 @@ class SimulatedAudioClassifier:
         if beat_feature > 100.0:
             beat_feature = 100.0
 
-        self.beat_feature_buffer.add(beat_feature)
-        self.beat_feature_buffer.calculate()
-
         # 5. Phase-Locked Beat Expectation & Dynamic Adaptive Thresholding
         duration_since_last_beat = (now - self.last_beat_timestamp) if self.last_beat_timestamp > 0 else 10000
 
@@ -640,6 +638,8 @@ class SimulatedAudioClassifier:
                     elif cv < 0.40:
                         if self.beat_regularity < 0.55:
                             self.beat_regularity = 0.55
+                    else:
+                        self.beat_regularity *= 0.75
 
             self.last_beat_timestamp = now
             duration_since_last_beat = 0
@@ -772,41 +772,114 @@ class SimulatedAudioClassifier:
             span = self.low_freq_buffer.max_val - self.low_freq_buffer.min_val
             m = self.low_freq_buffer.mean
             std_dev = self.low_freq_buffer.std_dev
-            has_bass_energy = (b0 >= 28 or b1 >= 32 or m >= 18.0 or span >= 20.0)
             dt_beat = (now - self.last_beat_timestamp) if self.last_beat_timestamp > 0 else 99999
 
+            has_current_bass = (b0 >= 28 or b1 >= 32)
+            has_window_bass = (self.low_freq_buffer.max_val >= 28.0 and (dt_beat <= 1500 or m >= 14.0))
+            has_bass_energy = has_current_bass or has_window_bass or m >= 18.0 or span >= 20.0
+
+            dt_factor = (float(self.frame_dt_ms) / 25.0) if (0 < self.frame_dt_ms <= 200) else 1.0
+            dt_factor = max(0.5, min(1.25, dt_factor))
+
             if not has_bass_energy or std_dev < 2.5 or span < 10.0 or dt_beat > 2500:
-                self.beat_probability *= 0.75
+                base_decay = 0.75 if (dt_beat > 1800 or self.low_freq_buffer.max_val < 20.0) else 0.90
+                self.beat_probability *= (base_decay ** dt_factor)
                 if self.beat_probability < 0.02:
                     self.beat_probability = 0.0
             else:
                 var_factor = max(0.0, min(1.0, (std_dev - 2.5) / 5.0))
                 span_factor = max(0.0, min(1.0, (span - 12.0) / 25.0))
+                rel_mod = std_dev / (m + 8.0)
+                mod_factor = max(0.0, min(1.0, (rel_mod - 0.12) / 0.25))
                 level_factor = max(0.0, min(1.0, (m - 12.0) / 28.0))
+                dyn_level_factor = max(level_factor, mod_factor * 0.85)
+
+                full_recency_ms = max(1200, (self.duration_between_beats * 5) // 2) if self.duration_between_beats > 0 else 1200
+                if full_recency_ms > 1600:
+                    full_recency_ms = 1600
+                max_recency_ms = full_recency_ms + 1000
 
                 recency = 0.0
-                if dt_beat <= 1200:
+                if dt_beat <= full_recency_ms:
                     recency = 1.0
-                elif dt_beat <= 2200:
-                    recency = 1.0 - (float(dt_beat - 1200) / 1000.0)
+                elif dt_beat <= max_recency_ms:
+                    recency = 1.0 - (float(dt_beat - full_recency_ms) / 1000.0)
 
-                target_prob = var_factor * (span_factor * 0.40 + level_factor * 0.25 + recency * 0.35)
                 recent_beats = sum(1 for bt in self.beat_times if bt > 0 and (now - bt) <= 3000)
+                has_locked_tempo = (self.beats_per_minute > 0 and self.bpm_lock_count >= 3 and 250 <= self.duration_between_beats <= 780)
+                rhythm_factor = 0.0
                 if recent_beats == 0:
-                    target_prob = 0.0
+                    rhythm_factor = 0.0
                 elif recent_beats == 1:
-                    target_prob = min(target_prob, 0.15)
+                    rhythm_factor = 0.15
                 else:
-                    if var_factor > 0.35 and span_factor > 0.35 and recency > 0.5:
-                        boost = 0.70 + 0.30 * var_factor
-                        if boost > target_prob:
-                            target_prob = boost
+                    recent_intervals = []
+                    for i in range(1, self.beat_count):
+                        if len(recent_intervals) >= 8:
+                            break
+                        curr_idx = (self.beat_idx + 16 - i) % 16
+                        prev_idx = (self.beat_idx + 16 - i - 1) % 16
+                        t_curr = self.beat_times[curr_idx]
+                        t_prev = self.beat_times[prev_idx]
+                        if t_curr == 0 or t_prev == 0 or t_curr <= t_prev or (now - t_curr) > 4500:
+                            break
+                        dt = t_curr - t_prev
+                        if 220 <= dt <= 1600:
+                            recent_intervals.append(float(dt))
+
+                    num_intervals = len(recent_intervals)
+                    if num_intervals == 0:
+                        rhythm_factor = 0.20
+                    elif num_intervals == 1:
+                        if has_locked_tempo:
+                            locked_dt = float(self.duration_between_beats)
+                            dt = recent_intervals[0]
+                            matches_grid = (abs(dt - locked_dt) <= locked_dt * 0.20) or (abs(dt - 2.0 * locked_dt) <= locked_dt * 0.35)
+                            rhythm_factor = 0.85 if matches_grid else 0.40
+                        else:
+                            rhythm_factor = 0.38
+                    else:
+                        norm_intervals = []
+                        if has_locked_tempo:
+                            locked_dt = float(self.duration_between_beats)
+                            for dt in recent_intervals:
+                                if abs(dt - 2.0 * locked_dt) <= locked_dt * 0.32:
+                                    norm_intervals.append(dt * 0.5)
+                                elif abs(dt - 3.0 * locked_dt) <= locked_dt * 0.40:
+                                    norm_intervals.append(dt / 3.0)
+                                else:
+                                    norm_intervals.append(dt)
+                        else:
+                            norm_intervals = list(recent_intervals)
+
+                        norm_mean = sum(norm_intervals) / float(num_intervals)
+                        norm_var = sum((x - norm_mean) ** 2 for x in norm_intervals) / float(num_intervals)
+                        norm_cv = math.sqrt(norm_var) / (norm_mean + 1.0)
+
+                        if norm_cv <= 0.14:
+                            rhythm_factor = 1.0 if has_locked_tempo else 0.92
+                        elif norm_cv >= 0.32:
+                            rhythm_factor = 0.18
+                        else:
+                            top = 1.0 if has_locked_tempo else 0.92
+                            rhythm_factor = top - (top - 0.18) * ((norm_cv - 0.14) / 0.18)
+
+                        if has_locked_tempo and recent_beats >= 3 and norm_cv <= 0.38:
+                            locked_floor = max(0.82, self.beat_regularity)
+                            if rhythm_factor < locked_floor:
+                                rhythm_factor = locked_floor
+
+                mod_raw = max(0.0, min(1.0, (var_factor * 0.45) + (span_factor * 0.35) + (dyn_level_factor * 0.20)))
+                inv_mod = 1.0 - mod_raw
+                mod_curve = 1.0 - (inv_mod * inv_mod * inv_mod)
+
+                target_prob = mod_curve * rhythm_factor * recency
+                if recent_beats == 1 and target_prob > 0.15:
+                    target_prob = 0.15
                 target_prob = max(0.0, min(1.0, target_prob))
 
-                if target_prob < self.beat_probability:
-                    self.beat_probability = (self.beat_probability * 0.75) + (target_prob * 0.25)
-                else:
-                    self.beat_probability = (self.beat_probability * 0.85) + (target_prob * 0.15)
+                alpha = (1.0 - (0.75 ** dt_factor)) if target_prob < self.beat_probability else (1.0 - (0.85 ** dt_factor))
+                self.beat_probability = (self.beat_probability * (1.0 - alpha)) + (target_prob * alpha)
                 if self.beat_probability < 0.02:
                     self.beat_probability = 0.0
 
@@ -1395,6 +1468,10 @@ def main():
         ground_truth_bpm = float(meta.get("ground_truth_bpm", 0.0))
         sum_bpm_errors = 0.0
         bpm_eval_count = 0
+        sum_active_beat_prob = 0.0
+        active_beat_prob_count = 0
+        sum_quiet_beat_prob = 0.0
+        quiet_beat_prob_count = 0
         hotspots = []
 
         for sec, snap in sorted(second_snapshots.items()):
@@ -1465,12 +1542,21 @@ def main():
                 if ph_err >= 0.5:
                     hotspots.append((sec, f"Phrase: expected '{exp_phrase}', got '{actual_phrase}'"))
 
-            # 4. Continuous BPM Error
+            # 4. Continuous BPM Error & Beat Probability Separation
             if ground_truth_bpm > 0.0 and exp_phrase not in ("breakdown", "outro"):
                 act_bpm = snap.get("bpm", 0)
                 if act_bpm > 0:
                     sum_bpm_errors += abs(act_bpm - ground_truth_bpm)
                     bpm_eval_count += 1
+
+            if exp_state == "music" and not in_slack and sec >= 3:
+                bp = snap.get("beat_prob", 0.0)
+                if exp_phrase in ("chorus", "verse"):
+                    sum_active_beat_prob += bp
+                    active_beat_prob_count += 1
+                elif exp_phrase in ("breakdown", "outro"):
+                    sum_quiet_beat_prob += bp
+                    quiet_beat_prob_count += 1
 
         presence_acc = max(0.0, 100.0 * (1.0 - (pres_errors / total_eval_secs)))
         semantic_acc = max(0.0, 100.0 * (1.0 - (sem_errors / total_eval_secs)))
@@ -1500,6 +1586,10 @@ def main():
         print(f"🎼 Phrase Anti-Churn:        {phrase_metrics['stability_score']:5.1f}%  (Penalty: -{phrase_metrics['penalty_score']:.1f}, Micro-Flips: {phrase_metrics['micro_flips']}, Ping-Pongs: {phrase_metrics['ping_pongs']})")
         if ground_truth_bpm > 0.0:
             print(f"🎵 BPM Accuracy:             {bpm_acc:5.1f}%  (MAE: {bpm_mae:.1f} BPM, Ground Truth: {ground_truth_bpm} BPM, {bpm_eval_count}s)")
+        if active_beat_prob_count > 0 or quiet_beat_prob_count > 0:
+            avg_act_bp = (sum_active_beat_prob / active_beat_prob_count) * 100.0 if active_beat_prob_count > 0 else 0.0
+            avg_quiet_bp = (sum_quiet_beat_prob / quiet_beat_prob_count) * 100.0 if quiet_beat_prob_count > 0 else 0.0
+            print(f"🥁 Beat Prob Separation:     Active (Chorus/Verse) avg={avg_act_bp:4.1f}% ({active_beat_prob_count}s) | Quiet (Breakdown/Outro) avg={avg_quiet_bp:4.1f}% ({quiet_beat_prob_count}s)")
         print("-" * 80)
         print(f"🏆 OVERALL BENCHMARK SCORE:  {overall_score:5.1f}%")
         print("=" * 80)
