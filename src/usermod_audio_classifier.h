@@ -40,6 +40,8 @@ private:
   bool haDiscoveryEnabled = true;
   bool rawStreamEnabled = false;
   uint32_t lastRawStreamMs = 0;
+  uint32_t lastRawSseMs = 0;
+  AsyncEventSource rawEvents{"/audio-classifier/stream"};
 
   ClassifierConfig config;
   AudioReactiveSource arSource;
@@ -58,6 +60,7 @@ private:
   bool discoveryPublished = false;
 
   void scanPresetsIfNeeded();
+  String serializeRawFrame(const AudioFrame& frame) const;
 
 #ifndef WLED_DISABLE_MQTT
   void publishRawFrame(const AudioFrame& frame);

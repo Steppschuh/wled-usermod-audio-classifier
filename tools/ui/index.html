@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WLED Audio Classifier — Testing &amp; Recording Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="logo">🎛️ Audio Classifier Studio</span>
+      <span id="active-fixture-name" class="fixture-pill">Loading...</span>
+      <span id="fixture-score-badge" class="badge badge-neutral">--%</span>
+      <span id="fixture-assert-badge" class="badge badge-neutral">--/--</span>
+    </div>
+    <div class="topbar-center">
+      <button id="btn-play" class="btn btn-primary" disabled title="Play / Pause WAV (Space)">▶ Play</button>
+      <span id="time-readout" class="mono">00:00.0 / 00:00.0</span>
+      <div class="zoom-group">
+        <button id="btn-zoom-out" class="btn btn-sm" title="Zoom Out">−</button>
+        <button id="btn-zoom-fit" class="btn btn-sm" title="Fit Full Timeline">Fit</button>
+        <button id="btn-zoom-in" class="btn btn-sm" title="Zoom In">+</button>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button id="btn-toggle-edit" class="btn">✏️ Edit Labels</button>
+      <button id="btn-toggle-config" class="btn">🎚️ What-If Config</button>
+      <button id="btn-open-record" class="btn btn-danger">⏺ Record New</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- Left Sidebar: Suite Summary & Fixture Browser -->
+    <aside class="sidebar">
+      <div class="card suite-card">
+        <div class="card-header">
+          <span>Suite Benchmark</span>
+          <span id="suite-delta" class="delta-pill">--</span>
+        </div>
+        <div class="suite-score-row">
+          <div id="suite-overall" class="big-score">--%</div>
+          <div class="suite-submetrics">
+            <div>Sem: <strong id="suite-sem">--%</strong></div>
+            <div>Pres: <strong id="suite-pres">--%</strong></div>
+            <div>Phr: <strong id="suite-phr">--%</strong></div>
+            <div>Stab: <strong id="suite-stab">--%</strong></div>
+          </div>
+        </div>
+        <div class="suite-flags mono">
+          <span>Micro-flips: <b id="suite-micro">0</b></span>
+          <span>Ping-pongs: <b id="suite-ping">0</b></span>
+        </div>
+        <div class="suite-actions">
+          <button id="btn-rerun-suite" class="btn btn-sm">↻ Re-run</button>
+          <button id="btn-save-baseline" class="btn btn-sm">📌 Save Baseline</button>
+        </div>
+      </div>
+
+      <div class="filters">
+        <select id="filter-category">
+          <option value="all">All Categories</option>
+        </select>
+        <select id="filter-split">
+          <option value="all">All Splits</option>
+          <option value="train">train</option>
+          <option value="eval">eval</option>
+        </select>
+      </div>
+
+      <div id="fixture-list" class="fixture-list"></div>
+    </aside>
+
+    <!-- Center Main Workspace -->
+    <main class="main-area">
+      <div class="timeline-wrap">
+        <div class="timeline-toolbar">
+          <div class="legend">
+            <span class="leg" style="--c:#2b313c">Silence</span>
+            <span class="leg" style="--c:#5c667a">Ambient</span>
+            <span class="leg" style="--c:#2f6feb">Intro</span>
+            <span class="leg" style="--c:#2da44e">Verse</span>
+            <span class="leg" style="--c:#d29922">Buildup</span>
+            <span class="leg" style="--c:#cf222e">Chorus</span>
+            <span class="leg" style="--c:#8250df">Breakdown</span>
+            <span class="leg" style="--c:#1b7c83">Outro</span>
+          </div>
+          <div class="timeline-toggles">
+            <label><input type="checkbox" id="chk-ghost" checked /> Ghost Baseline</label>
+            <label><input type="checkbox" id="chk-features" checked /> Rhythm &amp; Slopes</label>
+          </div>
+        </div>
+
+        <div class="canvas-container" id="canvas-container">
+          <canvas id="timeline-canvas"></canvas>
+        </div>
+
+        <div class="pan-bar">
+          <input type="range" id="pan-slider" min="0" max="1000" value="0" />
+        </div>
+      </div>
+
+      <div class="bottom-panels">
+        <!-- Hotspots & Assertions -->
+        <section class="panel">
+          <div class="panel-header">
+            <span>Error Hotspots &amp; Assertions</span>
+            <span id="hotspot-count" class="muted">0 items</span>
+          </div>
+          <div id="hotspots-list" class="scroll-list"></div>
+        </section>
+
+        <!-- Trace Inspector -->
+        <section class="panel">
+          <div class="panel-header">
+            <span>Trace Inspector</span>
+            <span id="trace-time" class="mono muted">@ 00:00.0</span>
+          </div>
+          <div id="trace-grid" class="trace-grid mono"></div>
+        </section>
+
+        <!-- Visual Label Editor (toggled) -->
+        <section id="label-editor-panel" class="panel hidden">
+          <div class="panel-header">
+            <span>Label Editor</span>
+            <button id="btn-save-labels" class="btn btn-sm btn-primary">💾 Save Labels</button>
+          </div>
+          <div class="editor-body">
+            <div class="editor-meta-grid">
+              <label>Category
+                <select id="ed-category">
+                  <option value="music_edm">music_edm</option>
+                  <option value="music_other">music_other</option>
+                  <option value="music">music</option>
+                  <option value="speech_meeting">speech_meeting</option>
+                  <option value="podcast">podcast</option>
+                  <option value="kitchen_domestic">kitchen_domestic</option>
+                  <option value="silence_hvac">silence_hvac</option>
+                  <option value="adjacent_room">adjacent_room</option>
+                  <option value="transitions">transitions</option>
+                  <option value="ambient_noise">ambient_noise</option>
+                </select>
+              </label>
+              <label>Split
+                <select id="ed-split">
+                  <option value="train">train</option>
+                  <option value="eval">eval</option>
+                </select>
+              </label>
+              <label>Primary Label
+                <select id="ed-primary">
+                  <option value="music">music</option>
+                  <option value="ambient_noise">ambient_noise</option>
+                  <option value="silence">silence</option>
+                </select>
+              </label>
+              <label>Ground Truth BPM
+                <input type="number" id="ed-bpm" min="0" max="240" step="0.1" />
+              </label>
+            </div>
+            <div class="editor-subhead">
+              <span>Segments (drag edges on Expected track, or edit below)</span>
+              <button id="btn-add-segment" class="btn btn-sm">+ Segment at Playhead</button>
+            </div>
+            <div id="ed-segments" class="ed-list"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- Right Drawer: What-If ClassifierConfig Sliders -->
+    <aside id="config-drawer" class="config-drawer hidden">
+      <div class="panel-header">
+        <span>What-If ClassifierConfig</span>
+        <div class="drawer-actions">
+          <button id="btn-reset-config" class="btn btn-sm">Reset</button>
+          <button id="btn-copy-config" class="btn btn-sm">Copy JSON</button>
+        </div>
+      </div>
+      <div id="config-sliders" class="config-sliders"></div>
+    </aside>
+  </div>
+
+  <!-- Live Recording Modal -->
+  <div id="record-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="panel-header">
+        <span>⏺ Record New Test Session</span>
+        <button id="btn-close-record" class="btn btn-sm">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <label>WLED IP <input id="rec-wled-ip" value="192.168.0.26" /></label>
+          <label>Category
+            <select id="rec-category">
+              <option value="music_edm">music_edm</option>
+              <option value="music_other">music_other</option>
+              <option value="speech_meeting">speech_meeting</option>
+              <option value="podcast">podcast</option>
+              <option value="kitchen_domestic">kitchen_domestic</option>
+              <option value="silence_hvac">silence_hvac</option>
+              <option value="adjacent_room">adjacent_room</option>
+              <option value="transitions">transitions</option>
+            </select>
+          </label>
+          <label>Primary Label
+            <select id="rec-label">
+              <option value="music">music</option>
+              <option value="ambient_noise">ambient_noise</option>
+              <option value="silence">silence</option>
+            </select>
+          </label>
+          <label>Duration (s, optional) <input id="rec-duration" type="number" min="5" max="600" placeholder="Manual stop" /></label>
+          <label class="chk-inline"><input id="rec-no-mic" type="checkbox" /> Disable MacBook Mic (.wav)</label>
+        </div>
+        <label class="full-width">Description <input id="rec-desc" placeholder="e.g. 128 BPM Progressive House or Zoom Call" /></label>
+
+        <div class="rec-controls">
+          <button id="btn-start-record" class="btn btn-danger">⏺ Start Recording</button>
+          <button id="btn-stop-record" class="btn btn-primary" disabled>⏹ Stop &amp; Open</button>
+          <span id="rec-timer" class="mono">0.0s</span>
+        </div>
+
+        <pre id="rec-logs" class="rec-logs mono">Ready to record.</pre>
+      </div>
+    </div>
+  </div>
+
+  <audio id="audio-player" preload="auto"></audio>
+  <script src="app.js"></script>
+</body>
+</html>

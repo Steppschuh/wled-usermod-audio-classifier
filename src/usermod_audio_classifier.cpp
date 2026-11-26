@@ -32,6 +32,7 @@ void AudioClassifierUsermod::setup() {
   arSource.init();
   classifier.setConfig(config);
   autoController.setConfig(autoConfig);
+  server.addHandler(&rawEvents);
   initDone = true;
 }
 
@@ -89,6 +90,12 @@ void AudioClassifierUsermod::loop() {
   if (arSource.pollFrame(frame)) {
     classifier.processFrame(frame);
     arSource.setClipping(classifier.isClipping());
+
+    if (rawEvents.count() > 0 && (millis() - lastRawSseMs >= 25)) {
+      lastRawSseMs = millis();
+      String payload = serializeRawFrame(frame);
+      rawEvents.send(payload.c_str(), "frame", lastRawSseMs);
+    }
 
 #ifndef WLED_DISABLE_MQTT
     if (rawStreamEnabled && WLED_MQTT_CONNECTED && (millis() - lastRawStreamMs >= 40)) {
@@ -217,6 +224,12 @@ bool AudioClassifierUsermod::onMqttMessage(char* topic, char* payload) {
 
 void AudioClassifierUsermod::publishRawFrame(const AudioFrame& frame) {
   String topic = HomeAssistantAudioDiscovery::getBaseTopic() + "raw";
+  String payload = serializeRawFrame(frame);
+  mqtt->publish(topic.c_str(), 0, false, payload.c_str());
+}
+#endif
+
+String AudioClassifierUsermod::serializeRawFrame(const AudioFrame& frame) const {
   String payload = "{\"t\":" + String(frame.timestampMs) +
                    ",\"lvl\":" + String(frame.levelPercent, 1) +
                    ",\"raw\":" + String((int)frame.rawVolume) +
@@ -230,10 +243,8 @@ void AudioClassifierUsermod::publishRawFrame(const AudioFrame& frame) {
     if (i < NUM_AUDIO_BANDS - 1) payload += ",";
   }
   payload += "]}";
-
-  mqtt->publish(topic.c_str(), 0, false, payload.c_str());
+  return payload;
 }
-#endif
 
 void AudioClassifierUsermod::setEnabled(bool newEnabled) {
   if (enabled != newEnabled) {
