@@ -377,8 +377,8 @@ void test_music_hangover_persists_across_breakdown(void) {
 
   // Now, since 35 seconds of non-musical sound passed (> 30s hold), it cleanly decays to ambient_noise
   TEST_ASSERT_EQUAL_STRING("Ambient Noise", classifier.getSemanticStateStr());
-  // When leaving music state, BPM must reset to 0
-  TEST_ASSERT_EQUAL_UINT16(0, classifier.getBPM());
+  // When leaving music state, BPM internally keeps the last known value
+  TEST_ASSERT_UINT16_WITHIN(5, 120, classifier.getBPM());
 }
 
 #include "fixture_loader.h"

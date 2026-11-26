@@ -167,7 +167,6 @@ public:
   const char* getPhraseStateStr() const;
   float getMusicConfidence() const { return musicConfidence; }
   uint16_t getBPM() const {
-    if (semanticState != AudioSemanticState::MUSIC) return 0;
     return beatsPerMinute;
   }
   float getBeatProbability() const { return beatProbability; }

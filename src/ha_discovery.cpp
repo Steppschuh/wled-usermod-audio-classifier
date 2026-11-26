@@ -481,9 +481,11 @@ void HomeAssistantAudioDiscovery::publishTelemetry(const AudioClassifier& classi
     snprintf(nrgBuf, sizeof(nrgBuf), "%u", soundEnergy);
     mqtt->publish((base + "energy").c_str(), 0, false, nrgBuf);
 
-    char bpmBuf[8];
-    snprintf(bpmBuf, sizeof(bpmBuf), "%u", bpm);
-    mqtt->publish((base + "bpm").c_str(), 0, false, bpmBuf);
+    if (semanticState == AudioSemanticState::MUSIC && bpm > 0) {
+      char bpmBuf[8];
+      snprintf(bpmBuf, sizeof(bpmBuf), "%u", bpm);
+      mqtt->publish((base + "bpm").c_str(), 0, false, bpmBuf);
+    }
 
     publishedAny = true;
   }

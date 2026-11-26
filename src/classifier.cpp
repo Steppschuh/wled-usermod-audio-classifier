@@ -630,7 +630,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     phraseState = MusicPhrase::UNKNOWN;
     soundEnergy = SoundEnergy::SILENCE;
     musicConfidence = 0.0f;
-    beatsPerMinute = 0;
+    bpmLockCount = 0;
     instBeatProbability = 0.0f;
     beatProbability = 0.0f;
     beatProbBuffer.reset();
@@ -938,12 +938,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       beatDelayBuffer.reset();
     }
     if (semanticState != AudioSemanticState::MUSIC) {
-      beatsPerMinute = 0;
-      rawBpm = 0.0f;
       bpmLockCount = 0;
-      durationBetweenBeats = 0;
-      durationBetweenBars = 0;
-      durationBetweenPhrases = 0;
     }
   }
 
@@ -1574,14 +1569,9 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     resetBarHistory();
   }
 
-  // 11. BPM Gating: BPM is held during music state and cleared when leaving music
+  // 11. BPM Gating: keep last known BPM internally when leaving music; reset lock so next track adapts quickly
   if (semanticState != AudioSemanticState::MUSIC) {
-    beatsPerMinute = 0;
-    rawBpm = 0.0f;
     bpmLockCount = 0;
     beatDelayBuffer.reset();
-    durationBetweenBeats = 0;
-    durationBetweenBars = 0;
-    durationBetweenPhrases = 0;
   }
 }
