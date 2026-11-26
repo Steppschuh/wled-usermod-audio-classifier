@@ -124,6 +124,17 @@ struct ClassifierConfig {
   uint32_t offDelayMs = 8000;             // Required sustain to return to QUIET state
   bool experimentalEnabled = true;        // Enable music & phrase detection (defaults to true)
   uint32_t musicHoldMs = 65000;           // Hold music state for up to 65s during breakdowns/soft transitions
+
+  // Tunable phrasing & transition parameters (defaults match calibrated baseline)
+  float relChorusLoudRatio = 1.45f;
+  float relChorusPeakRatio = 0.94f;
+  float relChorusDeltaFloor = 8.0f;
+  float relChorusBassTrend = 1.05f;
+  float slopeBuildupCentroid = 0.70f;
+  float slopeBuildupHighToBass = 0.30f;
+  float slopeBuildupHighFlux = 0.35f;
+  uint32_t phraseDwellMinMs = 2000;
+  float outroRecoveryMedRatio = 0.70f;
 };
 
 class AudioClassifier {
@@ -169,6 +180,17 @@ public:
   }
   uint8_t getExpectedBeatIndex() const { return expectedBeatIndex; }
   uint8_t getExpectedBarIndex() const { return expectedBarIndex; }
+
+  // Diagnostic Trace Telemetry (for offline evaluation & tuning)
+  float getDecayedMaxLoudness() const { return decayedMaxLoudness; }
+  float getInstBeatProbability() const { return instBeatProbability; }
+  float getBarNovelty() const { return barNovelty; }
+  float getHighFluxSlope() const { return highFluxSlope; }
+  float getCentroidSlope() const { return centroidSlope; }
+  float getLoudnessSlope() const { return loudnessSlope; }
+  float getTrackActiveMedLoud() const { return trackActiveMedLoud; }
+  size_t getBeatCount() const { return beatCount; }
+  uint16_t getBarCount() const { return barCount; }
 
 private:
   void update1sMetrics(uint32_t now);

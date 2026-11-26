@@ -102,6 +102,11 @@ jobs:
         run: |
           pio test -e native
 
+      - name: Build & Run Suite Evaluation Gate
+        run: |
+          pio run -e eval
+          python3 tools/evaluate.py --check-baseline test/baseline_scores.json --max-regression 1.5
+
   build-firmware:
     name: Build WLED Firmware (${{ matrix.env }})
     needs: test-native

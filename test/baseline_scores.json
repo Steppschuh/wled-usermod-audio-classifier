@@ -1,0 +1,64 @@
+{
+  "overall_score": 94.47,
+  "semantic_acc": 98.56,
+  "presence_acc": 99.11,
+  "phrase_acc": 83.4,
+  "stability_score": 96.57,
+  "categories": {
+    "ambient_noise": {
+      "count": 2,
+      "overall_score": 99.44,
+      "semantic_acc": 99.59,
+      "presence_acc": 98.34,
+      "phrase_acc": 100.0,
+      "stability_score": 100.0,
+      "failed_assertions": 0
+    },
+    "music": {
+      "count": 3,
+      "overall_score": 91.16,
+      "semantic_acc": 97.88,
+      "presence_acc": 99.63,
+      "phrase_acc": 72.33,
+      "stability_score": 94.29,
+      "failed_assertions": 0
+    }
+  },
+  "fixtures": {
+    "session_20261104_081914.json": {
+      "overall_score": 100.0,
+      "semantic_acc": 100.0,
+      "presence_acc": 100.0,
+      "phrase_acc": 100.0,
+      "stability_score": 100.0
+    },
+    "session_20261104_210347.json": {
+      "overall_score": 98.88,
+      "semantic_acc": 99.17,
+      "presence_acc": 96.67,
+      "phrase_acc": 100.0,
+      "stability_score": 100.0
+    },
+    "session_20261104_030037.json": {
+      "overall_score": 92.22,
+      "semantic_acc": 94.75,
+      "presence_acc": 100.0,
+      "phrase_acc": 76.23,
+      "stability_score": 100.0
+    },
+    "session_20261104_113800.json": {
+      "overall_score": 96.04,
+      "semantic_acc": 100.0,
+      "presence_acc": 100.0,
+      "phrase_acc": 90.75,
+      "stability_score": 93.53
+    },
+    "session_20261104_201823.json": {
+      "overall_score": 85.23,
+      "semantic_acc": 98.89,
+      "presence_acc": 98.89,
+      "phrase_acc": 50.0,
+      "stability_score": 89.33
+    }
+  }
+}

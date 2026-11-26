@@ -1368,7 +1368,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
                           (currentLevel >= 38.0f && smoothPeak >= 48.0f && bassTrend >= 1.35f);
     bool relChorusCheck = hasTrackContext && (smoothPeak >= noiseFloor + 14.0f) &&
                           (beatProbability >= 0.50f || beatDetected) && (
-                            (relLoud >= 1.45f && relPeak >= 0.94f && smoothAvg >= trackActiveMedLoud + 8.0f && bassTrend >= 1.05f) ||
+                            (relLoud >= config.relChorusLoudRatio && relPeak >= config.relChorusPeakRatio && smoothAvg >= trackActiveMedLoud + config.relChorusDeltaFloor && bassTrend >= config.relChorusBassTrend) ||
                             (smoothPeak >= 38.0f && relPeak >= 0.90f && relLoud >= 0.94f && smoothAvg >= noiseFloor + 14.0f && bassTrend >= 0.85f)
                           );
     bool canEnterChorus = (hasTrackContext ? (relChorusCheck || (absChorusCheck && relLoud >= 0.92f)) : absChorusCheck) &&
@@ -1388,7 +1388,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
                                    (smoothPeak >= 14.0f && smoothAvg >= 9.0f);
 
     bool hasSlopeBuildup = (barCount >= 3) &&
-                           (centroidSlope >= 0.70f || highToBassSlope >= 0.30f || highFluxSlope >= 0.35f) &&
+                           (centroidSlope >= config.slopeBuildupCentroid || highToBassSlope >= config.slopeBuildupHighToBass || highFluxSlope >= config.slopeBuildupHighFlux) &&
                            (loudnessSlope >= 0.05f || highFluxSlope >= 0.45f) &&
                            (beatProbability < 0.65f || barsWithoutBeats >= 1) &&
                            (smoothAvg >= noiseFloor + 5.0f);
@@ -1410,7 +1410,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     }
 
     bool canRecoverFromOutro = (currentLevel >= noiseFloor + 6.0f) &&
-                               (average1sLevel >= fmaxf(noiseFloor + 10.0f, hasTrackContext ? trackActiveMedLoud * 0.70f : 18.0f)) &&
+                               (average1sLevel >= fmaxf(noiseFloor + 10.0f, hasTrackContext ? trackActiveMedLoud * config.outroRecoveryMedRatio : 18.0f)) &&
                                !isVolumeCollapsed;
     float sOutro = 0.0f;
     if (soundEnergy == SoundEnergy::OUTRO) {
@@ -1488,9 +1488,9 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     }
 
     // Unified bar-synchronized transition gate + dwell rules (replaces dual > / < tree)
-    bool immediateBeatTransition = beatDetected && (timeSincePhraseChange >= 2000) && (updatedEnergy == SoundEnergy::CHORUS || (updatedEnergy == SoundEnergy::VERSE && timeSincePhraseChange >= 3500)) && (updatedEnergy != soundEnergy);
-    bool barGate = barClosedThisFrame || isVolumeCollapsed || (timeSincePhraseChange >= 2000 && updatedEnergy == SoundEnergy::OUTRO);
-    if ((updatedEnergy != soundEnergy) && (((now - lastEnergyUpdateTime >= 2000) && barGate) || immediateBeatTransition)) {
+    bool immediateBeatTransition = beatDetected && (timeSincePhraseChange >= config.phraseDwellMinMs) && (updatedEnergy == SoundEnergy::CHORUS || (updatedEnergy == SoundEnergy::VERSE && timeSincePhraseChange >= 3500)) && (updatedEnergy != soundEnergy);
+    bool barGate = barClosedThisFrame || isVolumeCollapsed || (timeSincePhraseChange >= config.phraseDwellMinMs && updatedEnergy == SoundEnergy::OUTRO);
+    if ((updatedEnergy != soundEnergy) && (((now - lastEnergyUpdateTime >= config.phraseDwellMinMs) && barGate) || immediateBeatTransition)) {
       bool allowTransition = false;
       if (soundEnergy == SoundEnergy::OUTRO) {
         if (updatedEnergy == SoundEnergy::CHORUS && timeSincePhraseChange >= 2000) allowTransition = true;
