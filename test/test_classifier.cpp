@@ -1663,6 +1663,253 @@ void test_speech_call_does_not_trigger_music_state(void) {
   }
 }
 
+void test_phrase_scale_invariance_quiet_vs_loud(void) {
+  // Approach A: Track-relative normalization should classify a quiet-room Chorus drop
+  // (where smoothPeak < 48%) into Chorus just like a loud-room drop, while keeping Verse in Verse.
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.onDelayMs = 400;
+  AudioClassifier quietCls(cfg);
+  AudioClassifier loudCls(cfg);
+  AudioFrame frame;
+
+  // 16s of Verse groove (0-16s) followed by 12s of Chorus drop (16-28s, +45% louder)
+  for (uint32_t t = 0; t <= 28000; t += 20) {
+    bool isChorus = (t >= 16000);
+    bool isKick = (t % 500) < 40;
+    float baseLvl = isChorus ? (isKick ? 40.0f : 32.0f) : (isKick ? 26.0f : 18.0f);
+
+    // Quiet room: 0.65x level (Chorus peak = 26% < 48% absolute threshold, yet > 1.24x Verse median)
+    //Wait: ensure bands are scaled too so kick detection works in both
+    frame.timestampMs = t;
+    frame.levelPercent = baseLvl * 0.65f;
+    frame.rawVolume = frame.levelPercent * 2.55f;
+    frame.smoothedVolume = (isChorus ? 22.0f : 14.0f) * 2.55f;
+    frame.isPeak = isKick;
+    frame.majorPeakHz = 75.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = isChorus ? 18 : 10;
+    if (isKick) {
+      frame.bands[0] = isChorus ? 90 : 65;
+      frame.bands[1] = isChorus ? 80 : 55;
+    } else {
+      frame.bands[0] = isChorus ? 24 : 12;
+      frame.bands[1] = isChorus ? 22 : 12;
+    }
+    quietCls.processFrame(frame);
+
+    // Loud room: 1.4x level (Chorus peak = 56%)
+    frame.levelPercent = baseLvl * 1.4f;
+    frame.rawVolume = frame.levelPercent * 2.55f;
+    frame.smoothedVolume = (isChorus ? 45.0f : 26.0f) * 2.55f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = isChorus ? 26 : 14;
+    if (isKick) {
+      frame.bands[0] = isChorus ? 140 : 90;
+      frame.bands[1] = isChorus ? 120 : 80;
+    } else {
+      frame.bands[0] = isChorus ? 36 : 16;
+      frame.bands[1] = isChorus ? 32 : 16;
+    }
+    loudCls.processFrame(frame);
+  }
+
+  TEST_ASSERT_EQUAL_STRING("Chorus", loudCls.getPhraseStateStr());
+  TEST_ASSERT_EQUAL_STRING("Chorus", quietCls.getPhraseStateStr());
+}
+
+void test_novelty_detects_drop_and_breakdown_at_bar_boundaries(void) {
+  // Approach B: Causal bar-synchronous novelty should keep steady 16s Verse stable
+  // and transition cleanly on an 8-bar structural drop + breakdown.
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.onDelayMs = 400;
+  AudioClassifier classifier(cfg);
+  AudioFrame frame;
+
+  // 16s of steady 120 BPM Verse (8 bars)
+  for (uint32_t t = 0; t < 16000; t += 20) {
+    bool isKick = (t % 500) < 40;
+    frame.timestampMs = t;
+    frame.levelPercent = isKick ? 28.0f : 18.0f;
+    frame.rawVolume = frame.levelPercent * 2.55f;
+    frame.smoothedVolume = 48.0f;
+    frame.isPeak = isKick;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 10;
+    if (isKick) { frame.bands[0] = 80; frame.bands[1] = 70; }
+    classifier.processFrame(frame);
+  }
+
+  // 8s Chorus drop (t=16..24s)
+  for (uint32_t t = 16000; t < 24000; t += 20) {
+    bool isKick = (t % 500) < 40;
+    frame.timestampMs = t;
+    frame.levelPercent = isKick ? 55.0f : 40.0f;
+    frame.rawVolume = frame.levelPercent * 2.55f;
+    frame.smoothedVolume = 105.0f;
+    frame.isPeak = isKick;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 30;
+    if (isKick) { frame.bands[0] = 170; frame.bands[1] = 150; }
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_EQUAL_STRING("Chorus", classifier.getPhraseStateStr());
+
+  // 6s Breakdown (t=24..30s)
+  for (uint32_t t = 24000; t <= 30000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 8.0f;
+    frame.rawVolume = 20.0f;
+    frame.smoothedVolume = 20.0f;
+    frame.isPeak = false;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 4;
+    frame.bands[8] = 16;
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_EQUAL_STRING("Breakdown", classifier.getPhraseStateStr());
+}
+
+void test_buildup_detected_across_different_riser_frequencies(void) {
+  // Approach C: Spectral slope buildup detection should trigger Buildup whether the riser
+  // is in mid-high synth bands (bands[6..8]) or upper hi-hat/noise bands (bands[12..15]).
+  for (int mode = 0; mode < 2; mode++) {
+    ClassifierConfig cfg;
+    cfg.experimentalEnabled = true;
+    cfg.onDelayMs = 400;
+    AudioClassifier classifier(cfg);
+    AudioFrame frame;
+
+    // 8s Verse groove
+    for (uint32_t t = 0; t < 8000; t += 20) {
+      bool isKick = (t % 500) < 40;
+      frame.timestampMs = t;
+      frame.levelPercent = isKick ? 28.0f : 18.0f;
+      frame.rawVolume = frame.levelPercent * 2.55f;
+      frame.smoothedVolume = 48.0f;
+      frame.isPeak = isKick;
+      for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 10;
+      if (isKick) { frame.bands[0] = 85; frame.bands[1] = 75; }
+      classifier.processFrame(frame);
+    }
+
+    // 8s Riser without kick (bands[6..8] for mode 0, bands[12..15] for mode 1)
+    for (uint32_t t = 8000; t <= 16000; t += 20) {
+      float prog = (float)(t - 8000) / 8000.0f;
+      frame.timestampMs = t;
+      frame.levelPercent = 16.0f + prog * 18.0f;
+      frame.rawVolume = frame.levelPercent * 2.55f;
+      frame.smoothedVolume = frame.rawVolume * 0.9f;
+      frame.isPeak = false;
+      frame.majorPeakHz = (mode == 0) ? 600.0f : 3500.0f;
+      for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 4;
+      if (mode == 0) {
+        frame.bands[6] = (uint8_t)(25 + prog * 70);
+        frame.bands[7] = (uint8_t)(30 + prog * 80);
+        frame.bands[8] = (uint8_t)(25 + prog * 70);
+      } else {
+        frame.bands[12] = (uint8_t)(25 + prog * 70);
+        frame.bands[13] = (uint8_t)(30 + prog * 80);
+        frame.bands[14] = (uint8_t)(25 + prog * 70);
+        frame.bands[15] = (uint8_t)(20 + prog * 60);
+      }
+      classifier.processFrame(frame);
+    }
+    TEST_ASSERT_EQUAL_STRING("Buildup", classifier.getPhraseStateStr());
+  }
+}
+
+void test_snare_roll_buildup_without_centroid_sweep(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  AudioClassifier classifier(cfg);
+
+  AudioFrame frame = {};
+  // 8s steady 120 BPM groove (4 bars) with low high-band flux
+  for (uint32_t t = 0; t < 8000; t += 20) {
+    bool isKick = (t % 500) < 60;
+    frame.timestampMs = t;
+    frame.levelPercent = isKick ? 32.0f : 18.0f;
+    frame.rawVolume = frame.levelPercent * 2.55f;
+    frame.smoothedVolume = 48.0f;
+    frame.isPeak = isKick;
+    frame.majorPeakHz = 120.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 10;
+    if (isKick) { frame.bands[0] = 85; frame.bands[1] = 75; }
+    classifier.processFrame(frame);
+  }
+
+  // 8s accelerating snare roll in bands[6..9] without pitch sweep or kick
+  for (uint32_t t = 8000; t <= 16000; t += 20) {
+    uint32_t period = (t < 12000) ? 240 : 120;
+    bool isSnare = (t % period) < 40;
+    frame.timestampMs = t;
+    frame.levelPercent = isSnare ? 26.0f : 14.0f;
+    frame.rawVolume = frame.levelPercent * 2.55f;
+    frame.smoothedVolume = 42.0f;
+    frame.isPeak = isSnare;
+    frame.majorPeakHz = 280.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 8;
+    if (isSnare) {
+      frame.bands[6] = 65;
+      frame.bands[7] = 70;
+      frame.bands[8] = 65;
+      frame.bands[9] = 55;
+    }
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_EQUAL_STRING("Buildup", classifier.getPhraseStateStr());
+}
+
+void test_loud_track_followed_by_quiet_track_recovers_verse(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  cfg.musicHoldMs = 65000;
+  AudioClassifier classifier(cfg);
+
+  AudioFrame frame = {};
+  // 12s loud Chorus (~65-70% peak)
+  for (uint32_t t = 0; t < 12000; t += 20) {
+    bool isKick = (t % 500) < 60;
+    frame.timestampMs = t;
+    frame.levelPercent = isKick ? 72.0f : 42.0f;
+    frame.rawVolume = frame.levelPercent * 2.55f;
+    frame.smoothedVolume = 120.0f;
+    frame.isPeak = isKick;
+    frame.majorPeakHz = 110.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 20;
+    if (isKick) { frame.bands[0] = 160; frame.bands[1] = 140; }
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_EQUAL_STRING("Chorus", classifier.getPhraseStateStr());
+
+  // 42s quiet inter-track pad / breakdown (~9%) so decayedMaxLoudness relaxes
+  for (uint32_t t = 12000; t < 54000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 9.0f;
+    frame.rawVolume = 23.0f;
+    frame.smoothedVolume = 22.0f;
+    frame.isPeak = false;
+    frame.majorPeakHz = 440.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 6;
+    frame.bands[4] = 18;
+    classifier.processFrame(frame);
+  }
+
+  // 12s quiet Track 2 Verse (~22% kicks, 120 BPM)
+  for (uint32_t t = 54000; t <= 66000; t += 20) {
+    bool isKick = (t % 500) < 60;
+    frame.timestampMs = t;
+    frame.levelPercent = isKick ? 24.0f : 14.0f;
+    frame.rawVolume = frame.levelPercent * 2.55f;
+    frame.smoothedVolume = 38.0f;
+    frame.isPeak = isKick;
+    frame.majorPeakHz = 120.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 8;
+    if (isKick) { frame.bands[0] = 75; frame.bands[1] = 65; }
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
+  TEST_ASSERT_TRUE(strcmp(classifier.getPhraseStateStr(), "Verse") == 0 ||
+                   strcmp(classifier.getPhraseStateStr(), "Chorus") == 0);
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_initial_state_is_quiet_and_silence);
@@ -1698,5 +1945,10 @@ int main(int argc, char **argv) {
   RUN_TEST(test_auto_preset_strict_cooldown_and_manual_override_hold);
   RUN_TEST(test_default_music_hangover_exceeds_one_minute_across_soft_outro_intro);
   RUN_TEST(test_speech_call_does_not_trigger_music_state);
+  RUN_TEST(test_phrase_scale_invariance_quiet_vs_loud);
+  RUN_TEST(test_novelty_detects_drop_and_breakdown_at_bar_boundaries);
+  RUN_TEST(test_buildup_detected_across_different_riser_frequencies);
+  RUN_TEST(test_snare_roll_buildup_without_centroid_sweep);
+  RUN_TEST(test_loud_track_followed_by_quiet_track_recovers_verse);
   return UNITY_END();
 }

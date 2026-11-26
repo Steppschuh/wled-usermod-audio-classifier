@@ -27,6 +27,21 @@ class SoundEnergy:
     CHORUS = 100
 
 
+class BarSummary:
+    def __init__(self):
+        self.mean_loudness = 0.0
+        self.peak_loudness = 0.0
+        self.sub_bass = 0.0
+        self.low_mid = 0.0
+        self.high_mid = 0.0
+        self.highs = 0.0
+        self.beat_prob = 0.0
+        self.spectral_centroid = 0.0
+        self.high_to_bass_ratio = 0.0
+        self.high_flux = 0.0
+        self.duration_ms = 0
+
+
 class PhrasePenaltyCalculator:
     def __init__(self):
         self.history = []  # list of (phrase, time_sec)
@@ -229,6 +244,7 @@ class SimulatedAudioClassifier:
 
         # Energy & Phrasing Memory
         self.prev_bass_energy = 0.0
+        self.prev_high_energy = 0.0
         self.short_bass_energy = 0.0
         self.long_bass_energy = 0.0
         self.phrase_level = 0.0
@@ -241,6 +257,201 @@ class SimulatedAudioClassifier:
         self.tentative_transition_ms = 0
         self.is_tentative_transition = False
         self.tentative_beats_seen = 0
+
+        # Per-Bar Musical History & Causal Novelty (Approaches A-D)
+        self.MAX_BARS = 32
+        self._reset_bar_history()
+
+    def _reset_bar_history(self):
+        self.bar_history = [BarSummary() for _ in range(self.MAX_BARS)]
+        self.bar_idx = 0
+        self.bar_count = 0
+        self.current_bar_start_ms = 0
+        self.current_bar_frames = 0
+        self.bar_sum_loudness = 0.0
+        self.bar_max_loudness = 0.0
+        self.bar_sum_sub_bass = 0.0
+        self.bar_sum_low_mid = 0.0
+        self.bar_sum_high_mid = 0.0
+        self.bar_sum_highs = 0.0
+        self.bar_sum_beat_prob = 0.0
+        self.bar_sum_centroid = 0.0
+        self.bar_sum_high_flux = 0.0
+        self.bar_novelty = 0.0
+        self.bar_energy_delta = 0.0
+        self.track_active_med_loud = 0.0
+        self.track_active_high_loud = 0.0
+        self.track_active_med_bass = 0.0
+        self.track_active_med_high_flux = 0.0
+        self.recent_active_loud = 0.0
+        self.high_to_bass_slope = 0.0
+        self.centroid_slope = 0.0
+        self.loudness_slope = 0.0
+        self.high_flux_slope = 0.0
+
+    def _update_bar_history(self, now, lvl, bands, beat_detected=False):
+        if self.current_bar_frames == 0:
+            self.current_bar_start_ms = now
+
+        sub_bass = (float(bands[0]) + float(bands[1])) * 0.5
+        low_mid = (float(bands[2]) + float(bands[3]) + float(bands[4])) / 3.0
+        high_mid = sum(float(bands[i]) for i in range(5, 10)) / 5.0
+        highs = sum(float(bands[i]) for i in range(10, 16)) / 6.0
+
+        high_energy = sum(float(bands[i]) for i in range(6, 15)) / 9.0
+        inst_high_flux = (high_energy - self.prev_high_energy) if high_energy > self.prev_high_energy else 0.0
+        self.prev_high_energy = high_energy
+
+        band_sum = sum(float(bands[i]) for i in range(16))
+        weighted_sum = sum(float(bands[i]) * float(i) for i in range(16))
+        centroid = (weighted_sum / band_sum) if band_sum > 1.0 else 0.0
+
+        self.bar_sum_loudness += lvl
+        if lvl > self.bar_max_loudness:
+            self.bar_max_loudness = lvl
+        self.bar_sum_sub_bass += sub_bass
+        self.bar_sum_low_mid += low_mid
+        self.bar_sum_high_mid += high_mid
+        self.bar_sum_highs += highs
+        self.bar_sum_beat_prob += self.beat_probability
+        self.bar_sum_centroid += centroid
+        self.bar_sum_high_flux += inst_high_flux
+        self.current_bar_frames += 1
+
+        target_bar_ms = self.duration_between_bars if (1000 <= self.duration_between_bars <= 4000) else 2000
+        elapsed = (now - self.current_bar_start_ms) if now >= self.current_bar_start_ms else 0
+        min_beat_snap_ms = (target_bar_ms - 150) if target_bar_ms > 300 else target_bar_ms
+        should_close = self.current_bar_frames > 0 and (
+            (beat_detected and elapsed >= min_beat_snap_ms) or
+            (elapsed >= target_bar_ms + 150) or
+            (elapsed >= target_bar_ms and self.beat_probability < 0.35)
+        )
+        if should_close:
+            inv_n = 1.0 / float(self.current_bar_frames)
+            bar = BarSummary()
+            bar.mean_loudness = self.bar_sum_loudness * inv_n
+            bar.peak_loudness = self.bar_max_loudness
+            bar.sub_bass = self.bar_sum_sub_bass * inv_n
+            bar.low_mid = self.bar_sum_low_mid * inv_n
+            bar.high_mid = self.bar_sum_high_mid * inv_n
+            bar.highs = self.bar_sum_highs * inv_n
+            bar.beat_prob = self.bar_sum_beat_prob * inv_n
+            bar.spectral_centroid = self.bar_sum_centroid * inv_n
+            bar.high_to_bass_ratio = (bar.high_mid + bar.highs) / (bar.sub_bass + 4.0)
+            bar.high_flux = self.bar_sum_high_flux * inv_n
+            bar.duration_ms = elapsed
+
+            self.bar_history[self.bar_idx] = bar
+            self.bar_idx = (self.bar_idx + 1) % self.MAX_BARS
+            if self.bar_count < self.MAX_BARS:
+                self.bar_count += 1
+
+            self.current_bar_start_ms = now
+            self.current_bar_frames = 0
+            self.bar_sum_loudness = 0.0
+            self.bar_max_loudness = 0.0
+            self.bar_sum_sub_bass = 0.0
+            self.bar_sum_low_mid = 0.0
+            self.bar_sum_high_mid = 0.0
+            self.bar_sum_highs = 0.0
+            self.bar_sum_beat_prob = 0.0
+            self.bar_sum_centroid = 0.0
+            self.bar_sum_high_flux = 0.0
+
+            louds = []
+            basses = []
+            hfluxes = []
+            recent_sum = 0.0
+            recent_n = 0
+            for i in range(self.bar_count):
+                idx = (self.bar_idx + self.MAX_BARS - 1 - i) % self.MAX_BARS
+                b = self.bar_history[idx]
+                spec = b.sub_bass + b.low_mid + b.high_mid + b.highs
+                if b.mean_loudness >= self.noise_floor + 5.0 and spec > 10.0 and (b.beat_prob >= 0.35 or b.sub_bass >= 12.0):
+                    louds.append(b.mean_loudness)
+                    basses.append(b.sub_bass)
+                hfluxes.append(b.high_flux)
+                if b.beat_prob >= 0.45 and recent_n < 6:
+                    recent_sum += b.mean_loudness
+                    recent_n += 1
+
+            if louds:
+                louds.sort()
+                basses.sort()
+                self.track_active_med_loud = louds[len(louds) // 2]
+                hi_idx = min(len(louds) - 1, int(float(len(louds)) * 0.85))
+                self.track_active_high_loud = louds[hi_idx]
+                self.track_active_med_bass = basses[len(basses) // 2]
+            if hfluxes:
+                hfluxes.sort()
+                self.track_active_med_high_flux = hfluxes[len(hfluxes) // 2]
+            if recent_n > 0:
+                self.recent_active_loud = recent_sum / float(recent_n)
+
+            if self.bar_count >= 4:
+                curr_n = 2
+                prev_n = 4 if (self.bar_count - curr_n >= 4) else (self.bar_count - curr_n)
+                c_vec = [0.0] * 6
+                p_vec = [0.0] * 6
+                c_ratio = p_ratio = c_cent = p_cent = c_loud = p_loud = c_hflux = p_hflux = 0.0
+
+                for i in range(curr_n):
+                    idx = (self.bar_idx + self.MAX_BARS - 1 - i) % self.MAX_BARS
+                    b = self.bar_history[idx]
+                    c_vec[0] += b.sub_bass / 100.0
+                    c_vec[1] += b.low_mid / 100.0
+                    c_vec[2] += b.high_mid / 100.0
+                    c_vec[3] += b.highs / 100.0
+                    c_vec[4] += b.beat_prob
+                    c_vec[5] += b.mean_loudness / 50.0
+                    c_ratio += b.high_to_bass_ratio
+                    c_cent += b.spectral_centroid
+                    c_loud += b.mean_loudness
+                    c_hflux += b.high_flux
+
+                for i in range(prev_n):
+                    idx = (self.bar_idx + self.MAX_BARS - 1 - curr_n - i) % self.MAX_BARS
+                    b = self.bar_history[idx]
+                    p_vec[0] += b.sub_bass / 100.0
+                    p_vec[1] += b.low_mid / 100.0
+                    p_vec[2] += b.high_mid / 100.0
+                    p_vec[3] += b.highs / 100.0
+                    p_vec[4] += b.beat_prob
+                    p_vec[5] += b.mean_loudness / 50.0
+                    p_ratio += b.high_to_bass_ratio
+                    p_cent += b.spectral_centroid
+                    p_loud += b.mean_loudness
+                    p_hflux += b.high_flux
+
+                c_vec = [x / float(curr_n) for x in c_vec]
+                p_vec = [x / float(prev_n) for x in p_vec]
+                c_ratio /= float(curr_n)
+                p_ratio /= float(prev_n)
+                c_cent /= float(curr_n)
+                p_cent /= float(prev_n)
+                c_loud /= float(curr_n)
+                p_loud /= float(prev_n)
+                c_hflux /= float(curr_n)
+                p_hflux /= float(prev_n)
+
+                dot = sum(c_vec[k] * p_vec[k] for k in range(6))
+                nc = math.sqrt(sum(c_vec[k] * c_vec[k] for k in range(6)))
+                np_norm = math.sqrt(sum(p_vec[k] * p_vec[k] for k in range(6)))
+                l2 = math.sqrt(sum((c_vec[k] - p_vec[k]) ** 2 for k in range(6)))
+                cos_dist = max(0.0, 1.0 - (dot / (nc * np_norm))) if (nc > 0.01 and np_norm > 0.01) else 0.0
+                rel_l2 = l2 / (nc + np_norm + 0.1)
+                self.bar_novelty = min(1.0, (cos_dist * 2.5) + (rel_l2 * 0.6))
+                self.bar_energy_delta = (c_loud - p_loud) / max(10.0, p_loud)
+
+                self.high_to_bass_slope = c_ratio - p_ratio
+                self.centroid_slope = c_cent - p_cent
+                self.loudness_slope = self.bar_energy_delta
+                base_hflux = max(1.0, self.track_active_med_high_flux, p_hflux)
+                self.high_flux_slope = (c_hflux - p_hflux) / base_hflux
+                if self.bar_novelty >= 0.50 and self.duration_between_phrases > 0:
+                    self.last_expected_phrase_start = now
+            return True
+        return False
 
     @property
     def bpm(self) -> int:
@@ -429,19 +640,27 @@ class SimulatedAudioClassifier:
         self.spread_buffer.add(spread)
         self.spread_buffer.calculate()
 
-        # 3. Track Decayed Maximum Loudness (5-minute peak hold with decay)
+        # 3. Track Decayed Maximum Loudness (adapts after 30s of sustained lower-level music)
+        dt_norm = (float(self.frame_dt_ms) / 25.0) if (0 < self.frame_dt_ms <= 200) else 1.0
+        dt_norm = max(0.5, min(1.25, dt_norm))
         if self.loudness_buffer.rms > self.decayed_max_loudness:
             self.max_loudness = self.loudness_buffer.rms
             self.decayed_max_loudness = self.max_loudness
             self.last_max_loudness_time = now
         else:
             dt = now - self.last_max_loudness_time
+            if dt > 30000 and self.loudness_buffer.rms < self.decayed_max_loudness * 0.65:
+                target_max = max(15.0, self.loudness_buffer.rms * 1.5)
+                relax_alpha = 1.0 - (0.9992 ** dt_norm)
+                self.decayed_max_loudness = (self.decayed_max_loudness * (1.0 - relax_alpha)) + (target_max * relax_alpha)
+                if self.decayed_max_loudness < 15.0:
+                    self.decayed_max_loudness = 15.0
             if dt > 300000:
                 decay = 1.0 - (float(dt - 300000) / 300000.0)
                 if decay < 0.0:
                     decay = 0.0
                 min_decayed = max(self.max_loudness * 0.5, 15.0)
-                self.decayed_max_loudness = max(self.max_loudness * decay, min_decayed)
+                self.decayed_max_loudness = min(self.decayed_max_loudness, max(self.max_loudness * decay, min_decayed))
         self.average_loudness_percent = (100.0 * self.loudness_buffer.rms / self.decayed_max_loudness) if self.decayed_max_loudness > 0.1 else 0.0
 
         # 4. Z-Score Onset Feature Extraction (beatFeature)
@@ -906,15 +1125,17 @@ class SimulatedAudioClassifier:
             if self.beat_probability < 0.02:
                 self.beat_probability = 0.0
 
-        # 10. Phrasing & SoundEnergy State Machine (Rave-Totem Algorithm with Hysteresis & Dwell Guards)
+        # 10. Phrasing & SoundEnergy State Machine (Bar-Aware + Track-Relative + Causal Novelty)
         if self.semantic_state == "music":
+            bar_closed_this_frame = self._update_bar_history(now, lvl, bands, beat_detected)
+
             smooth_avg = max(self.average_1s_level, self.loudness_buffer.rms)
             smooth_peak = max(self.peak_1s_level, self.loudness_buffer.max_val)
 
             if self.sound_energy == SoundEnergy.SILENCE:
                 self.phrase_level = lvl
                 self.low_volume_start_ms = 0
-                if (smooth_peak >= 45.0 or self.current_level >= 40.0) and (smooth_avg >= 32.0 or self.current_level >= 35.0):
+                if (smooth_peak >= 60.0 or self.current_level >= 50.0) and (smooth_avg >= 40.0 or self.current_level >= 45.0):
                     self.sound_energy = SoundEnergy.CHORUS
                     self.phrase_state = "chorus"
                 else:
@@ -998,19 +1219,40 @@ class SimulatedAudioClassifier:
             no_beats_recent = (duration_since_last_beat > 1200 or bars_without_beats >= 1)
             has_active_beat_groove = (bars_without_beats == 0) and (duration_since_last_beat <= (bar_dur * 5 // 4)) and (self.inst_beat_probability >= 0.25 or constant_beats)
 
-            can_enter_chorus = (
+            has_track_context = (self.bar_count >= 4 and self.track_active_med_loud >= 8.0)
+            rel_loud = (smooth_avg / max(8.0, self.track_active_med_loud)) if has_track_context else 1.0
+            rel_peak = (smooth_peak / max(12.0, self.track_active_high_loud)) if has_track_context else 1.0
+            sub_bass_now = (float(bands[0]) + float(bands[1])) * 0.5
+            upper_now = sum(float(bands[i]) for i in range(5, 16)) / 11.0
+
+            is_relative_breakdown = (
+                has_track_context
+                and (self.recent_active_loud >= 14.0)
+                and (smooth_avg < self.recent_active_loud * 0.58)
+                and (self.beat_probability < 0.25)
+                and (bars_without_beats >= 2)
+            )
+
+            abs_chorus_check = (
                 (smooth_peak >= 48.0 and smooth_avg >= 32.0 and self.current_level >= 24.0 and bass_trend >= 0.85)
                 or (drop_in_last_phrase and (smooth_peak >= 42.0 or smooth_avg >= 32.0) and smooth_avg >= 28.0 and self.current_level >= 22.0 and bass_trend >= 0.85)
                 or (self.current_level >= 38.0 and smooth_peak >= 48.0 and bass_trend >= 1.35)
-            ) and (beat_in_last_phrase or beat_detected)
+            )
+            rel_chorus_check = has_track_context and (smooth_peak >= self.noise_floor + 14.0) and (self.beat_probability >= 0.50 or beat_detected) and (
+                (rel_loud >= 1.45 and rel_peak >= 0.94 and smooth_avg >= self.track_active_med_loud + 8.0 and bass_trend >= 1.05)
+                or (smooth_peak >= 38.0 and rel_peak >= 0.90 and rel_loud >= 0.94 and smooth_avg >= self.noise_floor + 14.0 and bass_trend >= 0.85)
+            )
+            can_enter_chorus = (
+                (rel_chorus_check or (abs_chorus_check and rel_loud >= 0.92)) if has_track_context else abs_chorus_check
+            ) and (beat_in_last_phrase or beat_detected) and (self.beat_probability >= 0.45 or beat_detected)
 
             can_enter_verse_from_low = (
                 has_active_beat_groove
                 and (self.inst_beat_probability >= 0.40)
                 and (duration_since_last_beat <= 1000)
-                and (smooth_avg >= max(self.noise_floor + 7.5, 11.0))
-                and (self.loudness_buffer.rms >= 10.5)
-                and (smooth_peak >= 16.0)
+                and (smooth_avg >= max(self.noise_floor + 6.0, 8.5))
+                and (self.loudness_buffer.rms >= max(self.noise_floor + 4.5, 7.5))
+                and (smooth_peak >= self.noise_floor + 10.0)
                 and (self.average_loudness_percent >= 48.0)
             )
 
@@ -1020,162 +1262,179 @@ class SimulatedAudioClassifier:
                 and (smooth_peak >= 14.0 and smooth_avg >= 9.0)
             )
 
-            has_buildup_features = (self.peak_1s_level >= 16.0 and smooth_avg >= 12.0) and (
+            has_slope_buildup = (
+                (self.bar_count >= 3)
+                and (self.centroid_slope >= 0.70 or self.high_to_bass_slope >= 0.30 or self.high_flux_slope >= 0.35)
+                and (self.loudness_slope >= 0.05 or self.high_flux_slope >= 0.45)
+                and (self.beat_probability < 0.65 or bars_without_beats >= 1)
+                and (smooth_avg >= self.noise_floor + 5.0)
+            )
+
+            has_band_buildup = (self.peak_1s_level >= 16.0 and smooth_avg >= 12.0) and (
                 (bands[10] >= 30 and bands[11] >= 40)
                 or (
                     bars_without_beats >= 1
                     and (
-                        (self.current_level > self.average_1s_level * 1.15 and self.peak_1s_level >= 20.0 and (bands[10] >= 18 or bands[11] >= 18))
-                        or (hz > 300.0 and (bands[10] >= 20 or bands[11] >= 20))
+                        (self.current_level > self.average_1s_level * 1.15 and self.peak_1s_level >= 20.0 and (bands[10] >= 18 or bands[11] >= 18 or upper_now > sub_bass_now * 1.4))
+                        or (hz > 300.0 and (bands[10] >= 20 or bands[11] >= 20 or upper_now > sub_bass_now * 1.4))
                     )
                 )
                 or (self.sound_energy == SoundEnergy.VERSE and bass_trend > 1.25 and bars_without_beats >= 1 and self.peak_1s_level >= 22.0)
             )
 
-            updated_energy = self.sound_energy
+            has_buildup_features = has_band_buildup or has_slope_buildup
 
+            # Approach D: Continuous 6-State Likelihood Scoring + Unified Transition Grammar
+            s_breakdown = 0.0
             if is_volume_collapsed and no_beats_recent:
+                s_breakdown = 0.95
+            elif is_relative_breakdown and no_beats_recent and self.sound_energy != SoundEnergy.CHORUS and time_since_phrase_change >= 4000:
+                s_breakdown = 0.82
+
+            can_recover_from_outro = (
+                (self.current_level >= self.noise_floor + 6.0)
+                and (self.average_1s_level >= max(self.noise_floor + 10.0, (self.track_active_med_loud * 0.70) if has_track_context else 18.0))
+                and not is_volume_collapsed
+            )
+            s_outro = 0.0
+            if self.sound_energy == SoundEnergy.OUTRO:
+                s_outro = 0.20 if can_recover_from_outro else 1.15
+            elif self.sound_energy == SoundEnergy.BREAKDOWN and time_since_phrase_change >= 20000 and bars_since_energy_update >= 10:
+                s_outro = 1.15
+
+            s_buildup = 0.0
+            if self.sound_energy != SoundEnergy.CHORUS:
+                if has_buildup_features:
+                    s_buildup = 0.84 if (has_slope_buildup and has_band_buildup) else 0.76
+                elif self.sound_energy == SoundEnergy.BUILDUP and not is_volume_collapsed and smooth_avg >= self.noise_floor + 4.0 and bars_since_energy_update < 16:
+                    s_buildup = 0.76
+
+            s_chorus = 0.0
+            if can_enter_chorus:
+                rel_boost = min(0.18, max(0.0, (rel_loud - 1.0) * 0.40)) if has_track_context else 0.10
+                nov_boost = 0.08 if (self.bar_novelty >= 0.45 and self.bar_energy_delta >= 0.20) else 0.0
+                s_chorus = min(1.0, 0.85 + rel_boost + nov_boost)
+            elif self.sound_energy == SoundEnergy.CHORUS and can_sustain_verse_or_chorus:
+                if not self.is_tentative_transition and time_since_phrase_change < phrase_dur and smooth_peak >= 35.0:
+                    s_chorus = 0.88
+                elif not near_phrase_boundary or drop_in_last_phrase or (smooth_peak >= 48.0 and smooth_avg >= 34.0):
+                    s_chorus = 0.84
+
+            s_verse = 0.0
+            if can_enter_verse_from_low if (self.sound_energy in (SoundEnergy.BREAKDOWN, SoundEnergy.OUTRO)) else can_sustain_verse_or_chorus:
+                if self.sound_energy != SoundEnergy.CHORUS or (bars_without_beats == 0 and self.current_level >= 18.0 and bass_energy >= 20.0 and bass_trend >= 0.75):
+                    s_verse = 0.78 if (rel_loud < 1.15) else 0.70
+
+            s_intro = 0.0
+            if self.sound_energy == SoundEnergy.INTRO and not can_enter_chorus and not has_buildup_features:
+                if not is_volume_collapsed and time_since_phrase_change < phrase_dur and not (bars_without_beats >= 2 and self.loudness_buffer.rms < 10.0) and not (no_beats_recent and self.loudness_buffer.rms < 8.5):
+                    s_intro = 0.82
+
+            if self.sound_energy == SoundEnergy.BREAKDOWN and s_breakdown > 0.0:
+                s_breakdown += 0.10
+            if self.sound_energy == SoundEnergy.OUTRO and s_outro > 0.0:
+                s_outro += 0.10
+            if self.sound_energy == SoundEnergy.BUILDUP and s_buildup > 0.0:
+                s_buildup += 0.10
+            if self.sound_energy == SoundEnergy.CHORUS and s_chorus > 0.0:
+                s_chorus += 0.10
+            if self.sound_energy == SoundEnergy.VERSE and s_verse > 0.0:
+                s_verse += 0.10
+            if self.sound_energy == SoundEnergy.INTRO and s_intro > 0.0:
+                s_intro += 0.10
+
+            updated_energy = SoundEnergy.BREAKDOWN
+            best_score = s_breakdown
+            if s_outro > best_score:
+                best_score = s_outro; updated_energy = SoundEnergy.OUTRO
+            if s_intro > best_score:
+                best_score = s_intro; updated_energy = SoundEnergy.INTRO
+            if s_verse > best_score:
+                best_score = s_verse; updated_energy = SoundEnergy.VERSE
+            if s_buildup > best_score:
+                best_score = s_buildup; updated_energy = SoundEnergy.BUILDUP
+            if s_chorus > best_score:
+                best_score = s_chorus; updated_energy = SoundEnergy.CHORUS
+
+            if best_score < 0.30:
                 if self.sound_energy == SoundEnergy.OUTRO:
-                    if self.current_level >= self.noise_floor + 6.0 and self.average_1s_level >= 18.0:
-                        updated_energy = SoundEnergy.BREAKDOWN
-                    else:
-                        updated_energy = SoundEnergy.OUTRO
+                    updated_energy = SoundEnergy.BREAKDOWN if can_recover_from_outro else SoundEnergy.OUTRO
+                elif self.sound_energy == SoundEnergy.VERSE and not is_volume_collapsed and bars_without_beats < 2 and not (bars_without_beats >= 1 and self.loudness_buffer.rms < 10.0 and self.current_level < 9.0) and not (bass_trend < 0.42 and self.loudness_buffer.rms < 10.5):
+                    updated_energy = SoundEnergy.VERSE
+                elif self.sound_energy == SoundEnergy.CHORUS and not is_volume_collapsed and not (bars_without_beats >= 2 and self.current_level < 16.0 and self.average_1s_level < 22.0) and not (bars_without_beats >= 1 and self.current_level < 15.0 and self.loudness_buffer.rms < 16.0):
+                    updated_energy = SoundEnergy.CHORUS
                 elif self.sound_energy == SoundEnergy.BREAKDOWN and time_since_phrase_change >= 20000 and bars_since_energy_update >= 10:
                     updated_energy = SoundEnergy.OUTRO
                 else:
                     updated_energy = SoundEnergy.BREAKDOWN
-            elif can_enter_chorus:
-                updated_energy = SoundEnergy.CHORUS
-            elif (self.sound_energy in (SoundEnergy.CHORUS, SoundEnergy.VERSE, SoundEnergy.INTRO)) and can_sustain_verse_or_chorus:
-                if self.sound_energy == SoundEnergy.CHORUS:
-                    if not self.is_tentative_transition and time_since_phrase_change < phrase_dur and smooth_peak >= 35.0:
-                        updated_energy = SoundEnergy.CHORUS
-                    elif near_phrase_boundary and (not drop_in_last_phrase or bass_trend < 0.90) and (smooth_peak < 48.0 and smooth_avg < 34.0 and self.current_level < 34.0):
-                        if bars_without_beats == 0 and self.current_level >= 18.0 and bass_energy >= 20.0:
-                            updated_energy = SoundEnergy.VERSE
-                        else:
-                            updated_energy = SoundEnergy.BREAKDOWN
-                    else:
-                        updated_energy = SoundEnergy.CHORUS
-                elif self.sound_energy == SoundEnergy.INTRO and time_since_phrase_change < phrase_dur:
-                    updated_energy = SoundEnergy.INTRO
-                else:
-                    updated_energy = SoundEnergy.VERSE
-            elif (self.sound_energy in (SoundEnergy.BREAKDOWN, SoundEnergy.OUTRO)) and can_enter_verse_from_low:
-                updated_energy = SoundEnergy.VERSE
-            elif (self.sound_energy in (SoundEnergy.BREAKDOWN, SoundEnergy.OUTRO, SoundEnergy.VERSE)) and has_buildup_features:
-                updated_energy = SoundEnergy.BUILDUP
-            elif self.sound_energy == SoundEnergy.BUILDUP and not is_volume_collapsed and smooth_avg >= self.noise_floor + 4.0 and bars_since_energy_update < 16:
-                updated_energy = SoundEnergy.BUILDUP
-            else:
-                if self.sound_energy == SoundEnergy.OUTRO:
-                    if self.current_level >= self.noise_floor + 6.0 and self.average_1s_level >= 18.0 and not is_volume_collapsed:
-                        updated_energy = SoundEnergy.BREAKDOWN
-                    else:
-                        updated_energy = SoundEnergy.OUTRO
-                elif self.sound_energy == SoundEnergy.VERSE:
-                    if is_volume_collapsed or bars_without_beats >= 2 or (bars_without_beats >= 1 and self.loudness_buffer.rms < 10.0 and self.current_level < 9.0) or (bass_trend < 0.42 and self.loudness_buffer.rms < 10.5):
-                        updated_energy = SoundEnergy.BREAKDOWN
-                    else:
-                        updated_energy = SoundEnergy.VERSE
-                elif self.sound_energy == SoundEnergy.INTRO:
-                    if is_volume_collapsed or (bars_without_beats >= 2 and self.loudness_buffer.rms < 10.0) or (no_beats_recent and self.loudness_buffer.rms < 8.5):
-                        updated_energy = SoundEnergy.BREAKDOWN
-                    else:
-                        updated_energy = SoundEnergy.INTRO
-                elif self.sound_energy == SoundEnergy.CHORUS:
-                    if is_volume_collapsed or (bars_without_beats >= 2 and self.current_level < 16.0 and self.average_1s_level < 22.0) or (bars_without_beats >= 1 and self.current_level < 15.0 and self.loudness_buffer.rms < 16.0):
-                        updated_energy = SoundEnergy.BREAKDOWN
-                    else:
-                        updated_energy = SoundEnergy.CHORUS
-                else:
-                    if self.sound_energy == SoundEnergy.BREAKDOWN and time_since_phrase_change >= 20000 and bars_since_energy_update >= 10:
-                        updated_energy = SoundEnergy.OUTRO
-                    else:
-                        updated_energy = SoundEnergy.BREAKDOWN
 
-            immediate_beat_transition = beat_detected and (updated_energy == SoundEnergy.CHORUS or (updated_energy == SoundEnergy.VERSE and time_since_phrase_change >= 3500)) and (updated_energy != self.sound_energy)
-            if (now - self.last_energy_update_time >= 1000) or immediate_beat_transition:
-                if updated_energy > self.sound_energy:
-                    prev_energy = self.sound_energy
-                    if self.sound_energy == SoundEnergy.OUTRO:
-                        if updated_energy == SoundEnergy.CHORUS and time_since_phrase_change >= 2000:
-                            self.sound_energy = SoundEnergy.CHORUS
-                        elif updated_energy == SoundEnergy.BUILDUP and time_since_phrase_change >= 2000:
-                            self.sound_energy = SoundEnergy.BUILDUP
-                        elif updated_energy == SoundEnergy.VERSE and time_since_phrase_change >= 3500:
-                            self.sound_energy = SoundEnergy.VERSE
-                    elif self.sound_energy == SoundEnergy.INTRO:
-                        if updated_energy == SoundEnergy.CHORUS:
-                            self.sound_energy = SoundEnergy.CHORUS
-                        elif updated_energy == SoundEnergy.BUILDUP and time_since_phrase_change >= 2000:
-                            self.sound_energy = SoundEnergy.BUILDUP
-                        elif updated_energy == SoundEnergy.VERSE and time_since_phrase_change >= phrase_dur:
-                            self.sound_energy = SoundEnergy.VERSE
-                    elif self.sound_energy == SoundEnergy.BREAKDOWN:
-                        if updated_energy == SoundEnergy.CHORUS and time_since_phrase_change >= 2000:
-                            self.sound_energy = SoundEnergy.CHORUS
-                        elif updated_energy == SoundEnergy.BUILDUP and time_since_phrase_change >= 2000:
-                            self.sound_energy = SoundEnergy.BUILDUP
-                        elif updated_energy == SoundEnergy.VERSE and time_since_phrase_change >= 3500:
-                            self.sound_energy = SoundEnergy.VERSE
-                        elif updated_energy == SoundEnergy.OUTRO and time_since_phrase_change >= 20000 and bars_since_energy_update >= 10:
-                            self.sound_energy = SoundEnergy.OUTRO
-                    elif self.sound_energy == SoundEnergy.VERSE:
-                        if updated_energy == SoundEnergy.CHORUS and (time_since_phrase_change >= 2000 or smooth_peak >= 52.0 or bass_trend >= 1.40):
-                            self.sound_energy = SoundEnergy.CHORUS
-                        elif updated_energy == SoundEnergy.BUILDUP and time_since_phrase_change >= 3000:
-                            self.sound_energy = SoundEnergy.BUILDUP
-                    elif self.sound_energy == SoundEnergy.BUILDUP:
-                        if updated_energy == SoundEnergy.CHORUS or (drop_in_last_phrase and (smooth_peak >= 38.0 or smooth_avg >= 28.0) and smooth_avg >= 26.0):
-                            self.sound_energy = SoundEnergy.CHORUS
-                    else:
-                        self.sound_energy = updated_energy
-                    if self.sound_energy != prev_energy:
-                        self.last_energy_update_time = now
-                elif updated_energy < self.sound_energy:
-                    if self.sound_energy == SoundEnergy.CHORUS:
-                        if not self.is_tentative_transition and time_since_phrase_change < phrase_dur and not is_volume_collapsed:
-                            if (
-                                updated_energy in (SoundEnergy.BREAKDOWN, SoundEnergy.OUTRO)
-                                and time_since_phrase_change >= 2500
-                                and (is_volume_collapsed or (bars_without_beats >= 1 and self.current_level < 15.0 and self.loudness_buffer.rms < 16.0))
-                            ):
-                                self.sound_energy = SoundEnergy.BREAKDOWN
-                                self.last_energy_update_time = now
-                        else:
-                            if updated_energy == SoundEnergy.VERSE and beat_in_last_bar and has_active_beat_groove:
-                                self.sound_energy = SoundEnergy.VERSE
-                                self.last_energy_update_time = now
-                            elif is_volume_collapsed or time_since_phrase_change >= 2500:
-                                self.sound_energy = SoundEnergy.BREAKDOWN
-                                self.last_energy_update_time = now
-                    elif self.sound_energy == SoundEnergy.BUILDUP:
-                        if bars_since_energy_update >= 16 or is_volume_collapsed or smooth_avg < self.noise_floor + 3.0:
-                            self.sound_energy = SoundEnergy.BREAKDOWN
-                            self.last_energy_update_time = now
-                        elif updated_energy == SoundEnergy.VERSE and has_active_beat_groove and time_since_phrase_change >= 8000:
-                            self.sound_energy = SoundEnergy.VERSE
-                            self.last_energy_update_time = now
-                    elif self.sound_energy == SoundEnergy.VERSE:
-                        if updated_energy == SoundEnergy.BREAKDOWN and (time_since_phrase_change >= 3500 or is_volume_collapsed):
-                            self.sound_energy = SoundEnergy.BREAKDOWN
-                            self.last_energy_update_time = now
-                    elif self.sound_energy == SoundEnergy.INTRO:
-                        if updated_energy == SoundEnergy.BREAKDOWN and (time_since_phrase_change >= 3000 or is_volume_collapsed):
-                            self.sound_energy = SoundEnergy.BREAKDOWN
-                            self.last_energy_update_time = now
-                    elif self.sound_energy == SoundEnergy.BREAKDOWN:
-                        if time_since_phrase_change >= 20000 and bars_since_energy_update >= 10:
-                            self.sound_energy = SoundEnergy.OUTRO
-                            self.last_energy_update_time = now
-                    elif self.sound_energy == SoundEnergy.OUTRO:
-                        if updated_energy == SoundEnergy.BREAKDOWN and time_since_phrase_change >= 3000 and not can_enter_verse_from_low:
-                            self.sound_energy = SoundEnergy.BREAKDOWN
-                            self.last_energy_update_time = now
-                    else:
-                        self.sound_energy = updated_energy
-                        self.last_energy_update_time = now
+            # Unified bar-synchronized transition gate + dwell rules (replaces dual > / < tree)
+            immediate_beat_transition = beat_detected and (time_since_phrase_change >= 2000) and (updated_energy == SoundEnergy.CHORUS or (updated_energy == SoundEnergy.VERSE and time_since_phrase_change >= 3500)) and (updated_energy != self.sound_energy)
+            bar_gate = bar_closed_this_frame or is_volume_collapsed or (time_since_phrase_change >= 2000 and updated_energy == SoundEnergy.OUTRO)
+            if (updated_energy != self.sound_energy) and (((now - self.last_energy_update_time >= 2000) and bar_gate) or immediate_beat_transition):
+                allow_transition = False
+                if self.sound_energy == SoundEnergy.OUTRO:
+                    if updated_energy == SoundEnergy.CHORUS and time_since_phrase_change >= 2000:
+                        allow_transition = True
+                    elif updated_energy == SoundEnergy.BUILDUP and time_since_phrase_change >= 2000:
+                        allow_transition = True
+                    elif updated_energy == SoundEnergy.VERSE and time_since_phrase_change >= 3500:
+                        allow_transition = True
+                    elif updated_energy == SoundEnergy.BREAKDOWN and time_since_phrase_change >= 3000 and not can_enter_verse_from_low:
+                        allow_transition = True
+                elif self.sound_energy == SoundEnergy.INTRO:
+                    if updated_energy == SoundEnergy.CHORUS:
+                        allow_transition = True
+                    elif updated_energy == SoundEnergy.BUILDUP and time_since_phrase_change >= 2000:
+                        allow_transition = True
+                    elif updated_energy == SoundEnergy.VERSE and time_since_phrase_change >= phrase_dur:
+                        allow_transition = True
+                    elif updated_energy == SoundEnergy.BREAKDOWN and (time_since_phrase_change >= 3000 or is_volume_collapsed):
+                        allow_transition = True
+                elif self.sound_energy == SoundEnergy.BREAKDOWN:
+                    if updated_energy == SoundEnergy.CHORUS and time_since_phrase_change >= 2000:
+                        allow_transition = True
+                    elif updated_energy == SoundEnergy.BUILDUP and time_since_phrase_change >= 2000:
+                        allow_transition = True
+                    elif updated_energy == SoundEnergy.VERSE and time_since_phrase_change >= 3500:
+                        allow_transition = True
+                    elif updated_energy == SoundEnergy.OUTRO and time_since_phrase_change >= 20000 and bars_since_energy_update >= 10:
+                        allow_transition = True
+                elif self.sound_energy == SoundEnergy.VERSE:
+                    if updated_energy == SoundEnergy.CHORUS and (time_since_phrase_change >= 2000 or smooth_peak >= 52.0 or bass_trend >= 1.40):
+                        allow_transition = True
+                    elif updated_energy == SoundEnergy.BUILDUP and time_since_phrase_change >= 3000:
+                        allow_transition = True
+                    elif updated_energy == SoundEnergy.BREAKDOWN and (time_since_phrase_change >= 3500 or is_volume_collapsed):
+                        allow_transition = True
+                elif self.sound_energy == SoundEnergy.BUILDUP:
+                    if updated_energy == SoundEnergy.CHORUS or (drop_in_last_phrase and (smooth_peak >= 38.0 or smooth_avg >= 28.0) and smooth_avg >= 26.0):
+                        updated_energy = SoundEnergy.CHORUS
+                        allow_transition = True
+                    elif bars_since_energy_update >= 16 or is_volume_collapsed or smooth_avg < self.noise_floor + 3.0:
+                        updated_energy = SoundEnergy.BREAKDOWN
+                        allow_transition = True
+                    elif updated_energy == SoundEnergy.VERSE and has_active_beat_groove and time_since_phrase_change >= 8000:
+                        allow_transition = True
+                elif self.sound_energy == SoundEnergy.CHORUS:
+                    if not self.is_tentative_transition and time_since_phrase_change < phrase_dur and not is_volume_collapsed:
+                        if (
+                            updated_energy in (SoundEnergy.BREAKDOWN, SoundEnergy.OUTRO)
+                            and time_since_phrase_change >= 2500
+                            and (is_volume_collapsed or (bars_without_beats >= 1 and self.current_level < 15.0 and self.loudness_buffer.rms < 16.0))
+                        ):
+                            updated_energy = SoundEnergy.BREAKDOWN
+                            allow_transition = True
+                    elif updated_energy == SoundEnergy.VERSE and beat_in_last_bar and has_active_beat_groove:
+                        allow_transition = True
+                    elif updated_energy == SoundEnergy.BREAKDOWN and (is_volume_collapsed or time_since_phrase_change >= 2500):
+                        allow_transition = True
+                else:
+                    allow_transition = True
+
+                if allow_transition:
+                    self.sound_energy = updated_energy
+                    self.last_energy_update_time = now
 
             if self.sound_energy == SoundEnergy.CHORUS:
                 self.phrase_state = "chorus"
@@ -1208,6 +1467,7 @@ class SimulatedAudioClassifier:
             self.is_tentative_transition = False
             self.phrase_level = 0.0
             self.low_volume_start_ms = 0
+            self._reset_bar_history()
 
         # 11. BPM Gating: BPM is held during music state and cleared when leaving music
         if self.semantic_state != "music":

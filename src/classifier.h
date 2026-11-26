@@ -103,6 +103,20 @@ struct RollingBuffer {
   }
 };
 
+struct BarSummary {
+  float meanLoudness = 0.0f;
+  float peakLoudness = 0.0f;
+  float subBass = 0.0f;          // mean of bands[0..1]
+  float lowMid = 0.0f;           // mean of bands[2..4]
+  float highMid = 0.0f;          // mean of bands[5..9]
+  float highs = 0.0f;            // mean of bands[10..15]
+  float beatProb = 0.0f;         // mean beatProbability
+  float spectralCentroid = 0.0f; // energy-weighted band index [0..15]
+  float highToBassRatio = 0.0f;
+  float highFlux = 0.0f;         // positive onset flux across bands[6..14]
+  uint32_t durationMs = 0;
+};
+
 struct ClassifierConfig {
   float quietThresholdPercent = 6.0f;     // Absolute minimum % to qualify as sound
   float marginAboveFloorPercent = 4.0f;   // Dynamic margin above background noise floor
@@ -160,6 +174,8 @@ private:
   void update1sMetrics(uint32_t now);
   void updateNoiseFloor(float new1sSample);
   void updatePresence(uint32_t now);
+  bool updateBarHistory(const AudioFrame& frame, uint32_t now, bool beatDetected);
+  void resetBarHistory();
   void updateMusicAndPhrasing(const AudioFrame& frame);
 
   ClassifierConfig config;
@@ -257,6 +273,8 @@ private:
   // Energy & Phrasing Memory
   float prevBandsNorm[NUM_AUDIO_BANDS] = {0};
   float prevBassEnergy = 0.0f;
+  float prevBassEnergy2 = 0.0f;
+  float prevHighEnergy = 0.0f;
   float shortBassEnergy = 0.0f;
   float longBassEnergy = 0.0f;
   float phraseLevel = 0.0f;
@@ -269,4 +287,32 @@ private:
   uint32_t tentativeTransitionMs = 0;
   bool isTentativeTransition = false;
   uint8_t tentativeBeatsSeen = 0;
+
+  // Per-Bar Musical History & Causal Novelty (Approaches A-D)
+  static constexpr size_t MAX_BARS = 32;
+  BarSummary barHistory[MAX_BARS];
+  size_t barIdx = 0;
+  size_t barCount = 0;
+  uint32_t currentBarStartMs = 0;
+  size_t currentBarFrames = 0;
+  float barSumLoudness = 0.0f;
+  float barMaxLoudness = 0.0f;
+  float barSumSubBass = 0.0f;
+  float barSumLowMid = 0.0f;
+  float barSumHighMid = 0.0f;
+  float barSumHighs = 0.0f;
+  float barSumBeatProb = 0.0f;
+  float barSumCentroid = 0.0f;
+  float barSumHighFlux = 0.0f;
+  float barNovelty = 0.0f;
+  float barEnergyDelta = 0.0f;
+  float trackActiveMedLoud = 0.0f;
+  float trackActiveHighLoud = 0.0f;
+  float trackActiveMedBass = 0.0f;
+  float trackActiveMedHighFlux = 0.0f;
+  float recentActiveLoud = 0.0f;
+  float highToBassSlope = 0.0f;
+  float centroidSlope = 0.0f;
+  float loudnessSlope = 0.0f;
+  float highFluxSlope = 0.0f;
 };
