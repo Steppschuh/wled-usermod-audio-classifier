@@ -140,7 +140,7 @@ class RollingBuffer:
 
 
 class SimulatedAudioClassifier:
-    def __init__(self, quiet_thresh=6.0, margin=4.0, on_delay_ms=1200, off_delay_ms=8000, music_hold_ms=30000):
+    def __init__(self, quiet_thresh=6.0, margin=4.0, on_delay_ms=1200, off_delay_ms=8000, music_hold_ms=65000):
         self.quiet_thresh = quiet_thresh
         self.margin = margin
         self.on_delay_ms = on_delay_ms
@@ -729,9 +729,19 @@ class SimulatedAudioClassifier:
         if self.beat_regularity > 0.50 and (now - self.last_beat_timestamp <= 3000):
             has_musical_evidence = True
             instant_confidence = self.beat_regularity
-        elif (((b01 >= b23 * 1.05 and b01 >= 10.0) or (high_energy >= 15.0 and b01 >= 20.0)) and not is_mid_overpowering and (self.current_level > (self.noise_floor + 5.0) or (lvl > (self.noise_floor + 4.0) and b01 >= 30.0))):
-            has_musical_evidence = True
-            instant_confidence = 0.75
+        else:
+            entering_music = (self.semantic_state != "music")
+            min_bass_ratio = 1.15 if entering_music else 1.05
+            min_low_bass = 18.0 if entering_music else 10.0
+            min_high_energy = 25.0 if entering_music else 15.0
+            min_high_bass = 25.0 if entering_music else 20.0
+            if (
+                ((b01 >= b23 * min_bass_ratio and b01 >= min_low_bass) or (high_energy >= min_high_energy and b01 >= min_high_bass))
+                and not is_mid_overpowering
+                and (self.current_level > (self.noise_floor + 5.0) or (lvl > (self.noise_floor + 4.0) and b01 >= 30.0))
+            ):
+                has_musical_evidence = True
+                instant_confidence = 0.75
 
         if has_musical_evidence:
             self.last_music_evidence_time = now
@@ -739,7 +749,7 @@ class SimulatedAudioClassifier:
             if self.music_confidence > 1.0:
                 self.music_confidence = 1.0
         else:
-            self.music_confidence *= 0.999
+            self.music_confidence *= 0.999 if self.semantic_state == "music" else 0.997
 
         # 8. Acoustic State Machine Transitions with Hangover Protection
         if self.semantic_state == "music":
@@ -758,7 +768,7 @@ class SimulatedAudioClassifier:
                 self.sound_energy = SoundEnergy.SILENCE
                 self.phrase_state = "unknown"
         else:
-            if self.music_confidence >= 0.60 or (self.beat_regularity >= 0.70 and self.current_level > self.noise_floor + 5.0):
+            if self.music_confidence >= 0.60 or (self.beat_regularity >= 0.72 and self.beat_count >= 3 and self.current_level > self.noise_floor + 5.0):
                 self.semantic_state = "music"
                 self.last_music_evidence_time = now
                 if self.music_confidence < 0.70:

@@ -109,7 +109,7 @@ struct ClassifierConfig {
   uint32_t onDelayMs = 1200;              // Required sustain to trigger SOUND state
   uint32_t offDelayMs = 8000;             // Required sustain to return to QUIET state
   bool experimentalEnabled = true;        // Enable music & phrase detection (defaults to true)
-  uint32_t musicHoldMs = 30000;           // Hold music state for up to 30s during breakdowns/quiet sections
+  uint32_t musicHoldMs = 65000;           // Hold music state for up to 65s during breakdowns/soft transitions
 };
 
 class AudioClassifier {

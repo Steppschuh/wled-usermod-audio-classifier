@@ -775,9 +775,18 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
   if (beatRegularity > 0.50f && (now - lastBeatTimestamp <= 3000)) {
     hasMusicalEvidence = true;
     instantConfidence = beatRegularity;
-  } else if (((b01 >= b23 * 1.05f && b01 >= 10.0f) || (highEnergy >= 15.0f && b01 >= 20.0f)) && !isMidOverpowering && (currentLevel > (noiseFloor + 5.0f) || (frame.levelPercent > (noiseFloor + 4.0f) && b01 >= 30.0f))) {
-    hasMusicalEvidence = true;
-    instantConfidence = 0.75f;
+  } else {
+    bool enteringMusic = (semanticState != AudioSemanticState::MUSIC);
+    float minBassRatio = enteringMusic ? 1.15f : 1.05f;
+    float minLowBass = enteringMusic ? 18.0f : 10.0f;
+    float minHighEnergy = enteringMusic ? 25.0f : 15.0f;
+    float minHighBass = enteringMusic ? 25.0f : 20.0f;
+    if (((b01 >= b23 * minBassRatio && b01 >= minLowBass) || (highEnergy >= minHighEnergy && b01 >= minHighBass)) &&
+        !isMidOverpowering &&
+        (currentLevel > (noiseFloor + 5.0f) || (frame.levelPercent > (noiseFloor + 4.0f) && b01 >= 30.0f))) {
+      hasMusicalEvidence = true;
+      instantConfidence = 0.75f;
+    }
   }
 
   if (hasMusicalEvidence) {
@@ -785,7 +794,8 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
     musicConfidence = (musicConfidence * 0.85f) + (instantConfidence * 0.15f);
     if (musicConfidence > 1.0f) musicConfidence = 1.0f;
   } else {
-    musicConfidence *= 0.999f;
+    // Decay faster while still in AMBIENT_NOISE so sparse speech/call peaks cannot ratchet up into MUSIC
+    musicConfidence *= (semanticState == AudioSemanticState::MUSIC) ? 0.999f : 0.997f;
   }
 
   // 8. Acoustic State Machine Transitions with Hangover Protection
@@ -807,7 +817,7 @@ void AudioClassifier::updateMusicAndPhrasing(const AudioFrame& frame) {
       phraseState = MusicPhrase::UNKNOWN;
     }
   } else {
-    if (musicConfidence >= 0.60f || (beatRegularity >= 0.70f && currentLevel > noiseFloor + 5.0f)) {
+    if (musicConfidence >= 0.60f || (beatRegularity >= 0.72f && beatCount >= 3 && currentLevel > noiseFloor + 5.0f)) {
       semanticState = AudioSemanticState::MUSIC;
       lastMusicEvidenceTime = now;
       if (musicConfidence < 0.70f) musicConfidence = 0.70f;

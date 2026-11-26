@@ -1574,6 +1574,95 @@ void test_auto_preset_strict_cooldown_and_manual_override_hold(void) {
   TEST_ASSERT_TRUE(pNextMax != p1);
 }
 
+void test_default_music_hangover_exceeds_one_minute_across_soft_outro_intro(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  // Use default musicHoldMs (>= 60000ms)
+  TEST_ASSERT_TRUE(cfg.musicHoldMs >= 60000);
+  AudioClassifier classifier(cfg);
+  AudioFrame frame;
+
+  // 1. 6 seconds of 120 BPM music
+  uint32_t lastBeat = 0;
+  for (uint32_t t = 0; t <= 6000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 40.0f;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 20;
+    if (t - lastBeat >= 500) {
+      frame.isPeak = true;
+      frame.bands[0] = 140;
+      frame.bands[1] = 120;
+      lastBeat = t;
+    } else {
+      frame.isPeak = false;
+    }
+    frame.bands[8] = 35;
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
+
+  // 2. 60 seconds of soft outro -> quiet transition -> soft intro (no beat peaks, low level)
+  for (uint32_t t = 6020; t <= 66000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 3.0f;
+    frame.isPeak = false;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 4;
+    classifier.processFrame(frame);
+    TEST_ASSERT_EQUAL_STRING("Music", classifier.getSemanticStateStr());
+    TEST_ASSERT_TRUE(classifier.isSoundDetected());
+  }
+
+  // 3. After hangover expires (> 65s) with quiet/flat audio, returns to Silence
+  for (uint32_t t = 66020; t <= 82000; t += 20) {
+    frame.timestampMs = t;
+    frame.levelPercent = 2.0f;
+    frame.isPeak = false;
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = 2;
+    classifier.processFrame(frame);
+  }
+  TEST_ASSERT_EQUAL_STRING("Silence", classifier.getSemanticStateStr());
+}
+
+void test_speech_call_does_not_trigger_music_state(void) {
+  ClassifierConfig cfg;
+  cfg.experimentalEnabled = true;
+  AudioClassifier classifier(cfg);
+  AudioFrame frame;
+
+  // Simulate 60 seconds of conversational call audio:
+  // Mid-heavy speech bursts with occasional low-band fundamental syllables and pauses
+  for (uint32_t t = 0; t <= 60000; t += 20) {
+    frame.timestampMs = t;
+    uint32_t cycle = t % 3500;
+    bool speaking = (cycle < 2200);
+    bool syllable = speaking && ((t % 280) < 40);
+
+    frame.levelPercent = speaking ? (syllable ? 26.0f : 18.0f) : 4.0f;
+    frame.rawVolume = frame.levelPercent * 2.55f;
+    frame.smoothedVolume = speaking ? 45.0f : 10.0f;
+    frame.isPeak = syllable;
+    frame.majorPeakHz = speaking ? 240.0f : 0.0f;
+
+    for (size_t b = 0; b < NUM_AUDIO_BANDS; b++) frame.bands[b] = speaking ? 12 : 2;
+    if (syllable) {
+      frame.bands[0] = 22;
+      frame.bands[1] = 26;
+      frame.bands[2] = 65;
+      frame.bands[3] = 70;
+      frame.bands[4] = 55;
+    } else if (speaking) {
+      frame.bands[0] = 10;
+      frame.bands[1] = 14;
+      frame.bands[2] = 45;
+      frame.bands[3] = 50;
+      frame.bands[4] = 40;
+    }
+    classifier.processFrame(frame);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(AudioSemanticState::MUSIC, classifier.getSemanticState(),
+                                  "Conversational speech call must not be misclassified as Music");
+  }
+}
+
 int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_initial_state_is_quiet_and_silence);
@@ -1607,5 +1696,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_auto_preset_prefix_matching_and_streaming_json_scan);
   RUN_TEST(test_auto_preset_mapping_fallback_and_overrides);
   RUN_TEST(test_auto_preset_strict_cooldown_and_manual_override_hold);
+  RUN_TEST(test_default_music_hangover_exceeds_one_minute_across_soft_outro_intro);
+  RUN_TEST(test_speech_call_does_not_trigger_music_state);
   return UNITY_END();
 }
